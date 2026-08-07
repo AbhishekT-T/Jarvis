@@ -1,0 +1,9 @@
+# Virtual environment
+jarvis_project/.venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Temporary audio files
+temp.wav
+jarvis_project/temp.wav
