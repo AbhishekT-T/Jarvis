@@ -7,3 +7,19 @@ __pycache__/
 # Temporary audio files
 temp.wav
 jarvis_project/temp.wav
+
+# Private conversation memory
+jarvis_project/memory.json
+
+# Piper voice model (60MB, re-downloadable)
+jarvis_project/voices/
+
+# Self-upgrade backups
+jarvis_project/.jarvis_backups/
+
+# SQLite databases
+*.db
+jarvis_project/*.db
+
+# Sandbox test files
+jarvis_project/sandbox/
