@@ -9,12 +9,19 @@ import base64
 import winreg
 import mss
 import mss.tools
-from PIL import ImageGrab
+from io import BytesIO
+from PIL import ImageGrab, Image
 import win32gui
 from playwright.sync_api import sync_playwright
+import ollama
 import memory
 
-VISION_MODEL = "moondream"
+# ── Model Tier Configuration ──────────────────────────────────────────────────
+# Flash Tier  : phi4-mini        — always-on conversation brain (VRAM)
+# Pro Tier    : qwen3-coder:30b  — heavy coding / algorithm tasks (System RAM)
+# Vision Tier : gemma4:e4b       — multimodal screen analysis (VRAM/RAM)
+VISION_MODEL = "gemma4:e4b"
+PRO_CODER_MODEL = "qwen3-coder:30b"
 
 def find_app_path(executable_name: str) -> str | None:
     """Finds the absolute path of an executable by searching PATH, Registry, and standard folders.
@@ -517,12 +524,43 @@ def _moondream_prompt(question: str) -> str:
     return question
 
 
-def _ask_vision_model(prompt: str, image_b64: str) -> str:
-    """Sends one question + screenshot to the Moondream vision model and returns its text answer."""
+def ask_pro_coder(prompt: str) -> str:
+    """Delegates complex coding, multi-step algorithm design, or deep technical debugging
+    to the heavy Pro Coder model (Qwen3-Coder-30B) running in system RAM.
+
+    Use this for tasks that require serious engineering effort: writing complete modules,
+    designing algorithms, debugging tricky logic, or any task where a small model
+    would struggle to produce a high-quality answer.
+
+    Args:
+        prompt (str): The detailed coding question or task to solve.
+
+    Returns:
+        str: Expert-level code or architectural advice from the Pro Coder subsystem.
+    """
+    print(f"\n[ROUTER] Waking up {PRO_CODER_MODEL} (System RAM)...")
     try:
-        import ollama
-    except ImportError:
-        return ""
+        response = ollama.chat(
+            model=PRO_CODER_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are JARVIS's internal Pro Coder subsystem. "
+                        "Provide only raw, expert-level code or architectural advice "
+                        "without conversational filler."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+        )
+        return response.message.content
+    except Exception as e:
+        return f"Error delegating task to Pro Coder: {str(e)}"
+
+
+def _ask_vision_model(prompt: str, image_b64: str) -> str:
+    """Sends one question + screenshot to the Gemma 4 vision model and returns its text answer."""
     response = ollama.chat(
         model=VISION_MODEL,
         messages=[{"role": "user", "content": prompt, "images": [image_b64]}],
@@ -530,7 +568,7 @@ def _ask_vision_model(prompt: str, image_b64: str) -> str:
     return (response.message.content or "").strip()
 
 def capture_and_analyze_screen(prompt: str) -> str:
-    """Takes an instant screenshot and answers a question about it using the local Moondream vision model.
+    """Takes an instant screenshot and answers a question about it using the Gemma 4 vision model.
 
     Use this instead of describe_screen when the user asks a specific question
     about what is on the screen (not just "what text is on screen").

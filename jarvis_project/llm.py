@@ -4,7 +4,6 @@ import platform
 import ollama
 
 import tools
-import sandbox_tools
 
 # Define tools for Ollama function calling
 available_tools = [
@@ -122,7 +121,7 @@ available_tools = [
         'type': 'function',
         'function': {
             'name': 'capture_and_analyze_screen',
-            'description': 'Takes an instant screenshot and uses the local Moondream vision model to answer a question about what is on the screen (apps, images, content, GUI elements). MUST be called whenever the user asks "what is on my screen?", "look at my screen", "what am I looking at", or asks any question about what is currently displayed on their desktop that needs visual understanding.',
+            'description': 'Takes an instant screenshot and uses the local Gemma 4 vision model to answer a question about what is on the screen (apps, images, content, GUI elements). MUST be called whenever the user asks "what is on my screen?", "look at my screen", "what am I looking at", or asks any question about what is currently displayed on their desktop that needs visual understanding.',
             'parameters': {
                 'type': 'object',
                 'properties': {
@@ -254,55 +253,24 @@ available_tools = [
     {
         'type': 'function',
         'function': {
-            'name': 'write_sandbox_file',
-            'description': 'Writes content to a file inside the isolated sandbox directory. Use this to create or edit python files for testing/development.',
+            'name': 'ask_pro_coder',
+            'description': (
+                'Delegates a complex coding, algorithm design, or deep technical debugging task '
+                'to the heavy Pro Coder subsystem (Qwen3-Coder-30B running in system RAM). '
+                'Use this whenever the user asks for complete module implementations, '
+                'architectural design, tricky bug analysis, or any engineering task that requires '
+                'expert-level reasoning a small model might get wrong. '
+                'Returns raw expert-level code or advice.'
+            ),
             'parameters': {
                 'type': 'object',
                 'properties': {
-                    'filename': {
+                    'prompt': {
                         'type': 'string',
-                        'description': 'The name of the file to write (e.g., test.py). Must reside strictly in sandbox.',
-                    },
-                    'content': {
-                        'type': 'string',
-                        'description': 'The complete code or text content to write into the file.',
+                        'description': 'A detailed description of the coding problem or task to solve.',
                     },
                 },
-                'required': ['filename', 'content'],
-            },
-        },
-    },
-    {
-        'type': 'function',
-        'function': {
-            'name': 'read_sandbox_file',
-            'description': 'Reads the contents of a file inside the isolated sandbox directory.',
-            'parameters': {
-                'type': 'object',
-                'properties': {
-                    'filename': {
-                        'type': 'string',
-                        'description': 'The name of the file to read (e.g., test.py).',
-                    },
-                },
-                'required': ['filename'],
-            },
-        },
-    },
-    {
-        'type': 'function',
-        'function': {
-            'name': 'run_sandbox_code',
-            'description': 'Executes a Python script inside the isolated sandbox directory and returns stdout/stderr/returncode. Useful to test, evaluate and verify code changes.',
-            'parameters': {
-                'type': 'object',
-                'properties': {
-                    'filename': {
-                        'type': 'string',
-                        'description': 'The name of the Python script to execute (e.g., test.py).',
-                    },
-                },
-                'required': ['filename'],
+                'required': ['prompt'],
             },
         },
     },
@@ -387,22 +355,18 @@ def _dispatch_tool(name: str, args: dict) -> str:
             return tools.forget_fact(int(args.get('fact_id', 0)))
         except (ValueError, TypeError):
             return "Failed: fact_id must be an integer."
-    if name == 'write_sandbox_file':
-        return sandbox_tools.write_sandbox_file(str(args.get('filename', '')), str(args.get('content', '')))
-    if name == 'read_sandbox_file':
-        return sandbox_tools.read_sandbox_file(str(args.get('filename', '')))
-    if name == 'run_sandbox_code':
-        res = sandbox_tools.run_sandbox_code(str(args.get('filename', '')))
-        import json
-        return json.dumps(res)
+    if name == 'ask_pro_coder':
+        return tools.ask_pro_coder(str(args.get('prompt', '')))
     return f"Unknown tool: {name}"
 
 
 def query_jarvis(prompt: str, history: list) -> str:
-    """Queries Ollama with qwen2.5:3b using conversation history, prompt, and tool calling.
+    """Queries Ollama with phi4-mini using conversation history, prompt, and tool calling.
 
     Runs a proper multi-step tool loop: the model can call tools, receive the
     results, and continue reasoning until it produces a final answer.
+    Heavy coding tasks are automatically routed to Qwen3-Coder-30B via the
+    ask_pro_coder tool.
 
     Args:
         prompt (str): The user message or voice transcription.
@@ -418,7 +382,7 @@ def query_jarvis(prompt: str, history: list) -> str:
     try:
         for _ in range(5):  # At most 5 tool-call rounds before forcing an answer
             response = ollama.chat(
-                model='qwen2.5:3b',
+                model='qwen2.5:3b',  # Flash Tier: always-on conversation brain
                 messages=messages,
                 tools=available_tools,
             )
