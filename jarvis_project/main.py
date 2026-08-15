@@ -4,12 +4,17 @@ import time
 import shutil
 import psutil
 
-import sounddevice as sd
+import sys
 
-import stt
 import llm
-import tts
 import memory
+
+TEXT_MODE = "--text" in sys.argv
+
+if not TEXT_MODE:
+    import sounddevice as sd
+    import stt
+    import tts
 
 EXIT_COMMANDS = {"quit", "exit", "stop", "goodbye"}
 FORGET_COMMANDS = {
@@ -20,6 +25,8 @@ FORGET_COMMANDS = {
 
 def _print_audio_info() -> None:
     """Shows which microphone is in use so bad capture can be diagnosed."""
+    if TEXT_MODE:
+        return
     try:
         device = sd.query_devices(kind="input")
         print(f"Audio input: {device['name']} | {device.get('default_samplerate', 44100):.0f} Hz")
@@ -59,7 +66,8 @@ def _monitor_system() -> None:
                 if free_gb < 5.0:
                     msg = f"System alert, sir. Storage space on drive C is critically low, with only {free_gb:.1f} gigabytes remaining."
                     print(f"\n[SYSTEM MONITOR ALERT] {msg}\n")
-                    tts.speak(msg)
+                    if not TEXT_MODE:
+                        tts.speak(msg)
                     continue
             except Exception:
                 pass
@@ -69,7 +77,8 @@ def _monitor_system() -> None:
             if cpu > 90.0:
                 msg = f"System alert, sir. CPU utilization is critically high at {cpu:.0f} percent."
                 print(f"\n[SYSTEM MONITOR ALERT] {msg}\n")
-                tts.speak(msg)
+                if not TEXT_MODE:
+                    tts.speak(msg)
                 continue
                 
             # 3. Check Memory (RAM) utilization
@@ -77,7 +86,8 @@ def _monitor_system() -> None:
             if ram > 90.0:
                 msg = f"System alert, sir. Memory utilization is critically high at {ram:.0f} percent."
                 print(f"\n[SYSTEM MONITOR ALERT] {msg}\n")
-                tts.speak(msg)
+                if not TEXT_MODE:
+                    tts.speak(msg)
                 continue
                 
         except Exception:
@@ -94,26 +104,36 @@ def main() -> None:
     monitor_thread = threading.Thread(target=_monitor_system, daemon=True)
     monitor_thread.start()
     
-    print("\n=======================================================")
-    print("SELECT INPUT MODE:")
-    print("  [1] Wake Word Only ('Hey Jarvis')")
-    print("  [2] Push-to-Talk Only (Hold CTRL)")
-    print("  [3] Combined: Wake Word OR Push-to-Talk (Default)")
-    print("  [4] Always Listening (Classic VAD)")
-    print("=======================================================")
-    mode_choice = input("Enter option (1/2/3/4) [3]: ").strip()
-    if mode_choice not in {"1", "2", "3", "4"}:
-        mode_choice = "3"
+    if TEXT_MODE:
+        mode_choice = "0"
+    else:
+        print("\n=======================================================")
+        print("SELECT INPUT MODE:")
+        print("  [1] Wake Word Only ('Hey Jarvis')")
+        print("  [2] Push-to-Talk Only (Hold CTRL)")
+        print("  [3] Combined: Wake Word OR Push-to-Talk (Default)")
+        print("  [4] Always Listening (Classic VAD)")
+        print("=======================================================")
+        mode_choice = input("Enter option (1/2/3/4) [3]: ").strip()
+        if mode_choice not in {"1", "2", "3", "4"}:
+            mode_choice = "3"
         
     detector = None
-    if mode_choice in {"1", "3"}:
+    if mode_choice in {"1", "3"} and not TEXT_MODE:
         from wakeword import WakeWordDetector
         detector = WakeWordDetector()
         
-    tts.speak(f"{_greeting()}, sir. Jarvis online.")
+    greeting_msg = f"{_greeting()}, sir. Jarvis online."
+    if not TEXT_MODE:
+        tts.speak(greeting_msg)
+    else:
+        print(f"JARVIS: {greeting_msg}")
+
     print("JARVIS is active. (Say 'exit' or 'quit' to stop).")
     
-    if mode_choice == "3":
+    if TEXT_MODE:
+        print("Listening: Text mode active. Type your message...")
+    elif mode_choice == "3":
         print("Listening: Say 'Hey Jarvis' OR Hold [CTRL] key down to speak...")
     elif mode_choice == "1":
         print("Listening: Say 'Hey Jarvis' to speak...")
@@ -125,7 +145,9 @@ def main() -> None:
     while True:
         try:
             user_text = ""
-            if mode_choice == "1":
+            if TEXT_MODE:
+                user_text = input("\nYou: ").strip()
+            elif mode_choice == "1":
                 detector.listen_for_wake_word()
                 user_text = stt.listen_and_transcribe()
             elif mode_choice == "2":
@@ -147,7 +169,8 @@ def main() -> None:
                 if _normalize(user_text) in EXIT_COMMANDS:
                     goodbye_msg = "Goodbye, sir."
                     print(f"JARVIS: {goodbye_msg}")
-                    tts.speak(goodbye_msg)
+                    if not TEXT_MODE:
+                        tts.speak(goodbye_msg)
                     return
 
                 if _normalize(user_text) in FORGET_COMMANDS:
@@ -155,10 +178,12 @@ def main() -> None:
                     history = []
                     memory.clear_history()
                     print(f"JARVIS: {reply}")
-                    tts.speak(reply)
+                    if not TEXT_MODE:
+                        tts.speak(reply)
                     break
 
-                print(f"You: {user_text}")
+                if not TEXT_MODE:
+                    print(f"You: {user_text}")
 
                 # Save user message to database in real-time
                 memory.append_message('user', user_text)
@@ -177,12 +202,16 @@ def main() -> None:
                 # Speak; if the user interrupts, JARVIS stops instantly.
                 # The audio that overlapped his speech is polluted by his own
                 # voice, so re-listen once he's silent for a clean capture.
-                if tts.speak(response):
-                    print("\n(You interrupted - JARVIS is listening...)\n")
-                    user_text = stt.listen_and_transcribe(max_wait=8.0)
-                    if not user_text:
-                        break
-                    continue
+                if not TEXT_MODE:
+                    if tts.speak(response):
+                        print("\n(You interrupted - JARVIS is listening...)\n")
+                        user_text = stt.listen_and_transcribe(max_wait=8.0)
+                        if not user_text:
+                            break
+                        continue
+                
+                break  # Exit the inner loop if not interrupted to listen again
+
 
         except KeyboardInterrupt:
             print("\nOffline.")

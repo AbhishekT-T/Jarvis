@@ -5,6 +5,13 @@ import ollama
 
 import tools
 
+# ── Model Tier Configuration ──────────────────────────────────────────────────
+# Flash Tier (Orchestrator): qwen2.5:3b — the always-on conversation brain.
+#   Locked entirely inside the 4 GB GPU VRAM and kept resident for zero latency.
+FLASH_MODEL = "qwen2.5:3b"
+FLASH_OPTIONS = {"num_gpu": -1}  # offload EVERY layer to the GPU
+FLASH_KEEP_ALIVE = -1            # keep loaded in VRAM for the whole session
+
 # Define tools for Ollama function calling
 available_tools = [
     {
@@ -361,12 +368,14 @@ def _dispatch_tool(name: str, args: dict) -> str:
 
 
 def query_jarvis(prompt: str, history: list) -> str:
-    """Queries Ollama with phi4-mini using conversation history, prompt, and tool calling.
+    """Queries the Flash Tier model (qwen2.5:3b) using history, prompt, and tool calling.
 
-    Runs a proper multi-step tool loop: the model can call tools, receive the
-    results, and continue reasoning until it produces a final answer.
-    Heavy coding tasks are automatically routed to Qwen3-Coder-30B via the
-    ask_pro_coder tool.
+    The Flash Tier is locked entirely into the 4 GB GPU VRAM and stays resident
+    for the whole session. It runs a proper multi-step tool loop: the model can
+    call tools, receive the results, and continue reasoning until it produces a
+    final answer. Heavy coding tasks are automatically routed to the Pro Tier
+    (qwen3-coder:30b) via the ask_pro_coder tool, and screen questions to the
+    Vision Tier (gemma4:e4b) via capture_and_analyze_screen.
 
     Args:
         prompt (str): The user message or voice transcription.
@@ -382,9 +391,11 @@ def query_jarvis(prompt: str, history: list) -> str:
     try:
         for _ in range(5):  # At most 5 tool-call rounds before forcing an answer
             response = ollama.chat(
-                model='qwen2.5:3b',  # Flash Tier: always-on conversation brain
+                model=FLASH_MODEL,
                 messages=messages,
                 tools=available_tools,
+                options=FLASH_OPTIONS,
+                keep_alive=FLASH_KEEP_ALIVE,
             )
 
             tool_calls = getattr(response.message, 'tool_calls', None) or []
@@ -402,7 +413,12 @@ def query_jarvis(prompt: str, history: list) -> str:
                 messages.append({'role': 'tool', 'content': str(tool_output)})
 
         # Tool loop limit reached without a final answer - ask once more, plainly.
-        response = ollama.chat(model='qwen2.5:3b', messages=messages)
+        response = ollama.chat(
+            model=FLASH_MODEL,
+            messages=messages,
+            options=FLASH_OPTIONS,
+            keep_alive=FLASH_KEEP_ALIVE,
+        )
         return response.message.content
 
     except Exception as e:

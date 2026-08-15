@@ -17,9 +17,7 @@
 9. [File: vad.py](#file-vadpy--voice-activity-detection)
 10. [File: wakeword.py](#file-wakewordpy--wake-word-detection)
 11. [File: memory.py](#file-memorypy--persistent-memory)
-12. [File: sandbox_tools.py](#file-sandbox_toolspy--safe-code-execution)
-13. [File: self_evolve.py](#file-self_evolvepy--autonomous-code-generation)
-14. [File: demo_self_evolve.py](#file-demo_self_evolvepy--demo-runner)
+12. [Scrapped: The Sandbox Evaluator Loop](#scrapped-the-sandbox-evaluator-loop)
 
 ---
 
@@ -41,15 +39,8 @@ wakeword   stt.py     llm.py     tts.py    memory.py
          vad.py    tools.py    vad.py
         (detect)  (act on OS) (barge-in)
                    │
-                   ▼
-            sandbox_tools.py
-            (safe code exec)
-                   ▲
-            self_evolve.py
-            (auto-debug AI)
-                   ▲
-          demo_self_evolve.py
-              (demo runner)
+                   ├──► Pro Tier   (qwen3-coder:30b, CPU, via ask_pro_coder)
+                   └──► Vision Tier(gemma4:e4b, via capture_and_analyze_screen)
 ```
 
 ---
@@ -92,8 +83,9 @@ This is exactly what happens from the moment you speak to when JARVIS replies:
 
 | Component | Library | Runs On |
 |-----------|---------|---------|
-| LLM | `ollama` → `qwen2.5:3b` | **GTX 1660 GPU (CUDA)** |
-| Screen Vision | `ollama` → `moondream` | **GTX 1660 GPU (CUDA)** |
+| LLM (Flash Tier) | `ollama` → `qwen2.5:3b` | **GTX 1660 GPU (CUDA)** |
+| Pro Coder (Pro Tier) | `ollama` → `qwen3-coder:30b` | **CPU (Ryzen, System RAM)** |
+| Screen Vision (Vision Tier) | `ollama` → `gemma4:e4b` | **GTX 1660 GPU (CUDA)** |
 | Speech-to-Text | `faster-whisper` (base.en, int8) | **CPU** |
 | Text-to-Speech | `piper` (neural) / `pyttsx3` (fallback) | **CPU** |
 | Voice Activity Detection | `sounddevice` + `numpy` RMS | CPU |
@@ -111,7 +103,7 @@ This is exactly what happens from the moment you speak to when JARVIS replies:
 ## File: `main.py` — The Orchestrator
 
 **Location:** `jarvis_project/main.py`  
-**Size:** 196 lines  
+**Size:** 224 lines
 **Role:** The entry point. Controls everything from startup to shutdown.
 
 ---
@@ -224,7 +216,7 @@ Uses `shutil.disk_usage()` and `psutil` — no external tools needed.
 ## File: `llm.py` — The LLM Brain
 
 **Location:** `jarvis_project/llm.py`  
-**Size:** 470 lines  
+**Size:** 468 lines
 **Role:** All Ollama interaction, JARVIS's personality, tool definitions, and the tool-calling loop.
 
 ---
@@ -233,7 +225,7 @@ Uses `shutil.disk_usage()` and `psutil` — no external tools needed.
 
 `llm.py` is the actual intelligence layer. It:
 - Gives JARVIS its personality and live context awareness.
-- Defines 18 tools the model can call.
+- Defines 16 tools the model can call.
 - Runs a multi-turn tool loop until the model produces a plain text answer.
 - Routes every tool call to the right Python function.
 
@@ -272,7 +264,7 @@ f"OS: {platform.system()} {platform.release()}"
 
 ---
 
-### The 18 Tools
+### The 16 Tools
 
 Defined in `available_tools` as a list of JSON Schema objects that Ollama reads to know what it can call:
 
@@ -285,7 +277,8 @@ Defined in `available_tools` as a list of JSON Schema objects that Ollama reads 
 | `check_disk_space` | System Info | Disk total/used/free for a drive |
 | `jarvis_search` | Web | Google search via Playwright |
 | `describe_screen` | Vision | OCR all text on screen |
-| `capture_and_analyze_screen` | Vision | Moondream vision model answers questions about screen |
+| `capture_and_analyze_screen` | Vision | Gemma 4 vision model answers questions about screen |
+| `ask_pro_coder` | Pro Tier | Delegates heavy coding to qwen3-coder:30b (CPU, RAM) |
 | `list_project_files` | Self-Inspection | Lists JARVIS's own source files |
 | `read_project_file` | Self-Inspection | Reads contents of a source file |
 | `apply_code_change` | Self-Modification | Safely rewrites a source file with backup + syntax check |
@@ -293,9 +286,6 @@ Defined in `available_tools` as a list of JSON Schema objects that Ollama reads 
 | `remember_fact` | Memory | Saves a fact about the user to SQLite |
 | `recall_facts` | Memory | Searches saved facts |
 | `forget_fact` | Memory | Deletes a saved fact by ID |
-| `write_sandbox_file` | Sandbox | Writes a file into the isolated sandbox directory |
-| `read_sandbox_file` | Sandbox | Reads a file from the sandbox |
-| `run_sandbox_code` | Sandbox | Executes a Python script in the sandbox |
 
 ---
 
@@ -350,7 +340,7 @@ Unknown tool names return `"Unknown tool: {name}"` — they never raise exceptio
 ## File: `tools.py` — OS Actions & Capabilities
 
 **Location:** `jarvis_project/tools.py`  
-**Size:** 782 lines  
+**Size:** 854 lines
 **Role:** Every real-world action JARVIS can perform. The largest file.
 
 ---
@@ -482,9 +472,9 @@ Simple `shutil.disk_usage()` wrapper. Normalizes the drive string (handles `"C"`
 Uses `mss` (faster than Pillow for screenshots):
 1. Grabs the full monitor as a PNG in memory.
 2. Base64-encodes it.
-3. Normalizes generic questions like "what's on my screen?" → "Describe this screen in detail." (Moondream handles specific phrasing poorly).
-4. Sends to **Moondream vision model** via `ollama.chat()` with the image.
-5. If Moondream returns nothing, retries with the generic description prompt.
+3. Normalizes generic questions like "what's on my screen?" → "Describe this screen in detail." (small local vision models handle specific phrasing poorly).
+4. Sends to **Gemma 4 vision model** (`gemma4:e4b`) via `ollama.chat()` with the image, then unloads it (`keep_alive=0`).
+5. If the model returns nothing, retries with the generic description prompt.
 6. Prepends the active window title for extra context.
 
 ---
@@ -533,7 +523,7 @@ These three functions just call `memory.py` and format the output nicely:
 ## File: `stt.py` — Speech-to-Text
 
 **Location:** `jarvis_project/stt.py`  
-**Size:** 159 lines  
+**Size:** 158 lines
 **Role:** Microphone capture and Whisper transcription. Forced to CPU.
 
 ---
@@ -622,7 +612,7 @@ Used by: Push-to-Talk mode and the Combined mode when CTRL is pressed.
 ## File: `tts.py` — Text-to-Speech
 
 **Location:** `jarvis_project/tts.py`  
-**Size:** 138 lines  
+**Size:** 137 lines
 **Role:** Converts JARVIS's text responses into spoken audio with real-time barge-in support.
 
 ---
@@ -696,7 +686,7 @@ The only function `main.py` ever calls:
 ## File: `vad.py` — Voice Activity Detection
 
 **Location:** `jarvis_project/vad.py`  
-**Size:** 167 lines  
+**Size:** 166 lines
 **Role:** Low-level audio primitives used by both `stt.py` and `tts.py`. Nothing else imports this directly.
 
 ---
@@ -777,7 +767,7 @@ The **pre-roll** is a clever detail — because VAD can only detect speech after
 ## File: `wakeword.py` — Wake Word Detection
 
 **Location:** `jarvis_project/wakeword.py`  
-**Size:** 80 lines  
+**Size:** 79 lines
 **Role:** Listens continuously for "Hey Jarvis" using a pre-trained ONNX model.
 
 ---
@@ -844,7 +834,7 @@ Returns a string so `main.py` knows which trigger fired and handles them differe
 ## File: `memory.py` — Persistent Memory
 
 **Location:** `jarvis_project/memory.py`  
-**Size:** 131 lines  
+**Size:** 130 lines
 **Role:** All SQLite database operations for conversation history and long-term facts.
 
 ---
@@ -915,221 +905,29 @@ Database file: `jarvis_project/jarvis_memory.db` (created automatically).
 
 ---
 
-## File: `sandbox_tools.py` — Safe Code Execution
+## SCRAPPED: The Sandbox Evaluator Loop (Generator / Critic / Reviser)
 
-**Location:** `jarvis_project/sandbox_tools.py`  
-**Size:** 78 lines  
-**Role:** Isolated file system and Python execution environment for JARVIS's coding tools.
+The fully autonomous self-evolution loop `sandbox_tools.py`, `self_evolve.py`, and
+`demo_self_evolve.py` (Generator drafts code -> Execution-Grounded Critic runs it in an
+isolated sandbox -> Reviser feeds tracebacks back to the model and loops until a zero
+exit code) was explored and then **scrapped to save hardware overhead**. The files were
+deleted in commit `bd433e4`. Do NOT reintroduce them.
 
----
-
-### What it does
-
-Provides a strictly isolated `sandbox/` directory where JARVIS can write, read, and run Python code without any risk of touching the project files or the system.
-
----
-
-### Security: Path Sanitization
-
-```python
-def _sanitize_path(filename: str) -> str:
-    base_name = os.path.basename(filename)          # strip ALL directory components
-    target_path = os.path.abspath(os.path.join(SANDBOX_DIR, base_name))
-    if not target_path.startswith(os.path.abspath(SANDBOX_DIR)):
-        raise ValueError("Access denied: ...")
-    return target_path
-```
-
-`os.path.basename()` strips everything — so `"../../main.py"` becomes `"main.py"` and lands in the sandbox, not the project root. The `startswith` check is a final safety net against any edge cases.
+The surviving safety mechanism is `apply_code_change()` in `tools.py`, which backs up,
+`py_compile`-validates, and rolls back JARVIS's own source edits.
 
 ---
 
-### `write_sandbox_file(filename, content)`
-
-1. Calls `_sanitize_path()`.
-2. Opens the file in the sandbox directory and writes content.
-3. Returns a success string.
-
-Simple. The security is entirely in `_sanitize_path`.
-
----
-
-### `read_sandbox_file(filename)`
-
-1. Sanitizes path.
-2. Checks the file exists.
-3. Reads and returns content as a string.
-
----
-
-### `run_sandbox_code(filename)`
-
-Executes a Python script in the sandbox:
-
-```python
-venv_python = ".venv/Scripts/python.exe"  # use project's venv if it exists
-python_exe = venv_python if os.path.exists(venv_python) else sys.executable
-
-result = subprocess.run(
-    [python_exe, path],
-    capture_output=True,
-    text=True,
-    cwd=SANDBOX_DIR,     # working directory is the sandbox
-    timeout=15            # hard 15-second timeout
-)
-```
-
-Returns a dict:
-```python
-{
-    "success": result.returncode == 0,
-    "returncode": result.returncode,
-    "stdout": result.stdout,
-    "stderr": result.stderr
-}
-```
-
-Return codes:
-- `-1` → file not found
-- `-2` → timed out (15s limit exceeded)
-- `-3` → unexpected execution error
-- `0` → success
-- Non-zero → script itself exited with an error
-
----
-
----
-
-## File: `self_evolve.py` — Autonomous Code Generation
-
-**Location:** `jarvis_project/self_evolve.py`  
-**Size:** 75 lines  
-**Role:** Generate → Test → Auto-debug Python code in a loop using the LLM.
-
----
-
-### What it does
-
-An independent agentic reasoning loop. Given a plain-English coding task, it:
-1. Asks the LLM to write Python code.
-2. Runs it in the sandbox.
-3. If it crashes, feeds the error back to the LLM and asks for a fix.
-4. Repeats up to `max_retries` times.
-
-This is the same "generate → evaluate → fix" pattern used by modern coding agents, implemented in ~75 lines.
-
----
-
-### `evolve_code(prompt, filename, max_retries=5)`
-
-**System prompt used:**
-> "You are an expert Python developer. Generate raw Python code to solve the user's task. Your response MUST contain ONLY the Python code inside a markdown code block (```python ... ```) and nothing else."
-
-**The loop:**
-
-```
-messages = [system_prompt, user_prompt]
-
-for attempt in 1..max_retries:
-    response = ollama.chat(qwen2.5:3b, messages)
-    
-    # Extract code from ```python ... ``` block
-    code = extract_from_markdown(response)
-    
-    # Write to sandbox and run it
-    write_sandbox_file(filename, code)
-    result = run_sandbox_code(filename)
-    
-    if result["success"]:
-        return {success: True, code, stdout}
-    
-    # Feed error back to the model
-    messages.append({"role": "assistant", "content": response})
-    messages.append({"role": "user", "content": f"Code failed:\n{stderr}\nFix it."})
-
-return {success: False, error: stderr}
-```
-
-**Code extraction** handles three formats:
-1. ` ```python ... ``` ` — preferred
-2. ` ``` ... ``` ` — plain block
-3. Raw output — used as-is
-
-The model receives its own previous attempt in the message history — it can see what it tried and why it failed, which gives it context to produce a better fix.
-
----
-
----
-
-## File: `demo_self_evolve.py` — Demo Runner
-
-**Location:** `jarvis_project/demo_self_evolve.py`  
-**Size:** 41 lines  
-**Role:** Standalone demo showing the self-evolution pipeline with a deliberately broken first attempt.
-
----
-
-### What it does
-
-A small script that demonstrates the full self-evolution loop end-to-end. It's not part of the main JARVIS runtime — you run it separately.
-
----
-
-### The Task (Deliberately Broken)
-
-```python
-task = (
-    "Write a Python script that calculates the average of a list of numbers. "
-    "IMPORTANT: In your first attempt, do NOT check if the list is empty. "
-    "Simply divide the sum by the length of the list, and execute this function "
-    "passing an empty list []. This will cause a ZeroDivisionError to test our "
-    "auto-debugging/evaluator pipeline."
-)
-```
-
-The model is **instructed to write buggy code on the first attempt**. This guarantees the error loop triggers, so you can watch the full generate → fail → fix cycle in action.
-
----
-
-### Expected Output
-
-```
-Attempt 1: Writes code without empty-list check → ZeroDivisionError
-[STDERR]: ZeroDivisionError: division by zero
-
-Attempt 2: Model sees its own error → fixes it → adds `if len(numbers) == 0: return 0`
-[STDOUT]: The average is: 0  (or handles gracefully)
-
-Success on attempt 2!
-```
-
----
-
-### Running It
-
-```bash
-cd jarvis_project
-python demo_self_evolve.py
-```
-
-You'll see live output from the `[EVOLVE]` prefix log lines as each attempt runs.
-
----
-
----
 
 ## Summary Table
 
 | File | Lines | Depends On | Used By |
 |------|-------|------------|---------|
-| `main.py` | 196 | `stt`, `llm`, `tts`, `memory`, `wakeword` | — (entry point) |
-| `llm.py` | 470 | `ollama`, `tools`, `sandbox_tools` | `main.py` |
-| `tools.py` | 782 | `psutil`, `playwright`, `ollama`, `memory` | `llm.py` |
-| `stt.py` | 159 | `faster_whisper`, `vad`, `noisereduce` | `main.py` |
-| `tts.py` | 138 | `piper`, `pyttsx3`, `vad`, `sounddevice` | `main.py` |
-| `vad.py` | 167 | `sounddevice`, `numpy` | `stt.py`, `tts.py` |
-| `wakeword.py` | 80 | `openwakeword`, `sounddevice` | `main.py` |
-| `memory.py` | 131 | `sqlite3` | `main.py`, `tools.py` |
-| `sandbox_tools.py` | 78 | `subprocess`, `os` | `llm.py`, `self_evolve.py` |
-| `self_evolve.py` | 75 | `ollama`, `sandbox_tools` | `demo_self_evolve.py` |
-| `demo_self_evolve.py` | 41 | `self_evolve`, `sandbox_tools` | — (standalone demo) |
+| `main.py` | 224 | `stt`, `llm`, `tts`, `memory`, `wakeword` | — (entry point) |
+| `llm.py` | 468 | `ollama`, `tools` | `main.py` |
+| `tools.py` | 854 | `psutil`, `playwright`, `ollama`, `memory` | `llm.py` |
+| `stt.py` | 158 | `faster_whisper`, `vad`, `noisereduce` | `main.py` |
+| `tts.py` | 137 | `piper`, `pyttsx3`, `vad`, `sounddevice` | `main.py` |
+| `vad.py` | 166 | `sounddevice`, `numpy` | `stt.py`, `tts.py` |
+| `wakeword.py` | 79 | `openwakeword`, `sounddevice` | `main.py` |
+| `memory.py` | 130 | `sqlite3` | `main.py`, `tools.py` |

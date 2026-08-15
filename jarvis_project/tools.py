@@ -17,9 +17,13 @@ import ollama
 import memory
 
 # ── Model Tier Configuration ──────────────────────────────────────────────────
-# Flash Tier  : phi4-mini        — always-on conversation brain (VRAM)
-# Pro Tier    : qwen3-coder:30b  — heavy coding / algorithm tasks (System RAM)
-# Vision Tier : gemma4:e4b       — multimodal screen analysis (VRAM/RAM)
+# Flash Tier  : qwen2.5:3b       — always-on conversation brain (4 GB GPU VRAM)
+#                                 (configured in llm.py: num_gpu=-1, keep_alive=-1)
+# Pro Tier    : qwen3-coder:30b  — heavy coding / algorithm tasks (System RAM, CPU).
+#                                 CPU-only (num_gpu=0) + unloaded after use (keep_alive=0).
+# Vision Tier : gemma4:e4b       — multimodal screen analysis (VRAM/RAM).
+#                                 Unloaded after use (keep_alive=0) so it never
+#                                 holds VRAM the Flash Tier needs.
 VISION_MODEL = "gemma4:e4b"
 PRO_CODER_MODEL = "qwen3-coder:30b"
 
@@ -505,12 +509,12 @@ def _get_active_window_title() -> str:
         pass
     return title
 
-def _moondream_prompt(question: str) -> str:
-    """Rewrites the user's question into a phrasing Moondream reliably answers.
+def _normalize_vision_prompt(question: str) -> str:
+    """Rewrites the user's question into a phrasing the vision model reliably answers.
 
-    Moondream (1.8B) is trained mostly on captioning/description tasks and
-    returns an empty response for some question phrasings, so generic screen
-    questions are normalized to a description prompt it handles well.
+    Small local vision models (e.g. gemma4:e4b) can return an empty response for
+    some question phrasings, so generic screen questions are normalized to a
+    description prompt they handle well.
     """
     q = question.lower().strip(" ,.?!")
     generic = (
@@ -553,6 +557,11 @@ def ask_pro_coder(prompt: str) -> str:
                 },
                 {"role": "user", "content": prompt},
             ],
+            # Run strictly on the CPU (never steal GPU VRAM from the Flash Tier)
+            # and unload the model from RAM the moment the response is returned,
+            # so the Pro Tier "goes back to sleep" until called again.
+            options={"num_gpu": 0},
+            keep_alive=0,
         )
         return response.message.content
     except Exception as e:
@@ -564,6 +573,9 @@ def _ask_vision_model(prompt: str, image_b64: str) -> str:
     response = ollama.chat(
         model=VISION_MODEL,
         messages=[{"role": "user", "content": prompt, "images": [image_b64]}],
+        # Unload the vision model immediately after answering so it never
+        # holds the GPU VRAM the always-resident Flash Tier depends on.
+        keep_alive=0,
     )
     return (response.message.content or "").strip()
 
@@ -592,7 +604,7 @@ def capture_and_analyze_screen(prompt: str) -> str:
         # 2. Encode the PNG and ask the vision model; retry with a description
         #    prompt if the model returns nothing for the user's exact question.
         image_b64 = base64.b64encode(png_bytes).decode("utf-8")
-        answer = _ask_vision_model(_moondream_prompt(prompt), image_b64)
+        answer = _ask_vision_model(_normalize_vision_prompt(prompt), image_b64)
         if not answer:
             answer = _ask_vision_model("Describe this screen in detail.", image_b64)
         if not answer:

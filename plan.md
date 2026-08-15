@@ -25,7 +25,7 @@ This is the single source of truth for all agents collaborating on the JARVIS pr
 | File | Role |
 |------|------|
 | `jarvis_project/main.py` | Master orchestrator / event loop |
-| `jarvis_project/llm.py` | Ollama interface, 18 tool definitions, tool-call loop |
+| `jarvis_project/llm.py` | Ollama interface, 16 tool definitions, tool-call loop |
 | `jarvis_project/tools.py` | All real-world OS actions (open apps, search, disk, self-modify) |
 | `jarvis_project/stt.py` | Microphone capture + faster-whisper transcription (CPU, int8) |
 | `jarvis_project/tts.py` | Piper TTS with barge-in support; pyttsx3 fallback |
@@ -36,7 +36,7 @@ This is the single source of truth for all agents collaborating on the JARVIS pr
 ### Non-Negotiable Hardware Rules (Never Break These)
 - `faster-whisper` must always use `device="cpu"` and `compute_type="int8"`.
 - Piper and pyttsx3 must always run on CPU.
-- Ollama (`qwen2.5:3b` + `moondream`) gets the GPU — never load other models on CUDA.
+- Ollama (`qwen2.5:3b` + `gemma4:e4b`) gets the GPU — never load other models on CUDA.
 - Do **not** create new virtual environments. Use the existing `.venv`.
 
 ### Key Architectural Invariants
@@ -55,10 +55,11 @@ This is the single source of truth for all agents collaborating on the JARVIS pr
 | Wake Word | ✅ Working | `hey_jarvis.onnx` via openWakeWord |
 | STT | ✅ Working | faster-whisper base.en, CPU int8 |
 | TTS | ✅ Working | Piper (alan-medium) with barge-in |
-| LLM + Tools | ✅ Working | qwen2.5:3b, 18 tools |
+| LLM + Tools | ✅ Working | qwen2.5:3b (Flash), 16 tools, GPU-pinned |
 | Memory | ✅ Working | SQLite, facts + conversation history |
 | Self-Modify | ✅ Working | read/apply/restore with backup |
-| Screen Vision | ✅ Working | Moondream via Ollama |
+| Screen Vision | ⚠️ Model not pulled | `gemma4:e4b` code path wired with `keep_alive=0` |
+| Pro Tier | ⚠️ Model not pulled | `qwen3-coder:30b` CPU + `keep_alive=0` code path wired |
 | Web Search | ✅ Working | Playwright (Chromium) |
 
 ---
@@ -67,6 +68,7 @@ This is the single source of truth for all agents collaborating on the JARVIS pr
 
 > Update this section when you start or finish working on a priority item.
 
+- [ ] Pull the remaining tier models: `ollama pull qwen3-coder:30b` (~19 GB) and `ollama pull gemma4:e4b`. Code paths are already wired; they will fail at runtime until pulled.
 - [ ] No active known bugs at time of file creation.
 - [ ] (Add new priorities / bugs here as they are discovered.)
 
@@ -97,6 +99,14 @@ Each entry MUST follow this template:
 **Why:** Reason — what problem it solved or feature it added.
 **Notes:** Anything the next agent needs to know (gotchas, follow-up work, etc.)
 ```
+
+---
+
+### [2026-08-15] — big-pickle (opencode)
+**Files changed:** `jarvis_project/llm.py`, `jarvis_project/tools.py`, `jarvis_project/main.py`, `AGENTS.md`, `plan.md` *(this file)*
+**What:** Brought the codebase in line with the final 3-tier architecture spec. `llm.py`: pinned the Flash Tier (`qwen2.5:3b`) fully to the GPU (`num_gpu=-1`) with permanent residency (`keep_alive=-1`), fixed the stale "phi4-mini" docstring. `tools.py`: Pro Tier (`qwen3-coder:30b`) now runs CPU-only (`num_gpu=0`) and unloads after use (`keep_alive=0`); Vision Tier (`gemma4:e4b`) unloads after every screen analysis (`keep_alive=0`). `main.py`: `--text` mode no longer prompts for an audio input mode. Rewrote `AGENTS.md` to document the 3-tier router, the scrapped sandbox loop, and the current 8-file layout.
+**Why:** The spec's core hardware-split rules (flash resident in VRAM, pro/vision sleep between calls) were not enforced by the code — models stayed hot in RAM/VRAM and the flash model could be evicted. Enforcing the sleep/wake contract keeps VRAM locked for the real-time voice loop.
+**Notes:** `qwen3-coder:30b` and `gemma4:e4b` are NOT installed on this machine yet — pull them before first use (see Active Priorities). The sandbox/self-evolve files were already deleted in commit `bd433e4`; do not reintroduce.
 
 ---
 
