@@ -6,18 +6,17 @@ This guide explains how to run **Jarvis (Local Voice Assistant)** and the **4-Ag
 
 ## Part 1: How to Run JARVIS (AI Voice Assistant)
 
-### Prerequisites:
-Make sure your Python virtual environment is ready:
-```powershell
-# Activate project virtual environment
-.\jarvis_project\.venv\Scripts\Activate.ps1
-```
+The easiest way is using the 1-click launcher:
 
-### 1. Run Jarvis in Voice Mode (Microphone + Speaker)
-Starts the real-time audio loop, listening for the wake word *"Hey Jarvis"*:
+### 1. Run in Voice Mode (Microphone + Speaker)
 ```powershell
-cd jarvis_project
-python main.py
+.\run_jarvis.ps1
+```
+*(Say "Hey Jarvis" to talk!)*
+
+### 2. Run in Text Mode (Chat via Keyboard)
+```powershell
+.\run_jarvis.ps1 -Text
 ```
 - **Wake Word**: Say *"Hey Jarvis"*.
 - **Speak**: Ask your question or command (e.g. *"What's the weather?"*, *"Check my disk space"*).
