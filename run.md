@@ -1,94 +1,50 @@
-# JARVIS & 4-Agent Swarm Execution Guide
+# JARVIS Execution Guide
 
-This guide explains how to run **Jarvis (Local Voice Assistant)** and the **4-Agent Multi-Agent Swarm (`agy`, `opencode`, `cline`, `kilo`)**.
+This guide explains how to run **JARVIS (Fully Local Voice & Text AI Assistant)**.
 
 ---
 
-## Part 1: How to Run JARVIS (AI Voice Assistant)
+## 1. Quick Start (1-Click Launcher)
 
-The easiest way is using the 1-click launcher:
+The easiest way to start Jarvis from PowerShell:
 
-### 1. Run in Voice Mode (Microphone + Speaker)
+### Voice Mode (Microphone + Speaker)
 ```powershell
 .\run_jarvis.ps1
 ```
-*(Say "Hey Jarvis" to talk!)*
+- Say **"Hey Jarvis"** to wake him up!
+- Ask questions, control your system, play YouTube videos, check storage, etc.
+- **Barge-In**: You can interrupt Jarvis while he is speaking.
 
-### 2. Run in Text Mode (Chat via Keyboard)
+### Text / Chat Mode (Keyboard only)
 ```powershell
 .\run_jarvis.ps1 -Text
 ```
-- **Wake Word**: Say *"Hey Jarvis"*.
-- **Speak**: Ask your question or command (e.g. *"What's the weather?"*, *"Check my disk space"*).
-- **Barge-In**: You can interrupt Jarvis while it speaks.
+- Lets you chat with the 3-tier LLM router, memory, and tools without needing a microphone.
 
-### 2. Run Jarvis in Text / Chat Mode (No Audio)
-Test the 3-tier LLM router, memory, and tools from your keyboard without using microphone/TTS:
-```powershell
-cd jarvis_project
-python main.py --text
-```
+---
 
-### 3. Run Architecture Smoke Tests
-Verifies model residency, CPU/GPU tier splits, and tool execution:
+## 2. Architecture & Smoke Testing
+
+To verify model residency, CPU/GPU hardware split, and tools:
 ```powershell
 .\jarvis_project\.venv\Scripts\python.exe tier_smoke_test.py
 ```
 
 ---
 
-## Part 2: How to Run the 4-Agent Autonomous Swarm
+## 3. Manual Virtual Environment Setup (Optional)
 
-The Swarm lets 4 AI coding agents work in parallel on your codebase across isolated Git worktrees without file conflicts.
-
-```
-┌─────────────────────────────────┬─────────────────────────────────┐
-│ PANE 1: Lead Director (agy)     │ PANE 2: Backend (opencode)      │
-│ Folder: M:\coding\Jarvis        │ Folder: M:\coding\Jarvis-backend│
-├─────────────────────────────────┼─────────────────────────────────┤
-│ PANE 3: Frontend (cline)        │ PANE 4: QA & Ponytail (kilo)    │
-│ Folder: M:\coding\Jarvis-front  │ Folder: M:\coding\Jarvis-qa     │
-└─────────────────────────────────┴─────────────────────────────────┘
-```
-
-### Step 1: Launch the 4-Pane Grid
-From PowerShell in the root directory:
+If running commands manually without `run_jarvis.ps1`:
 ```powershell
-.\swarm\start_swarm.ps1
-```
-*Windows Terminal opens automatically in a 2x2 split grid with all 3 worker daemons watching for tasks.*
-
----
-
-### Step 2: Give a Goal in Pane 1 (Top-Left)
-Click into **Pane 1** and type:
-```powershell
-python swarm/dispatch.py "Add a real-time audio visualizer to the UI"
+cd jarvis_project
+.\.venv\Scripts\Activate.ps1
+python main.py
 ```
 
 ---
 
-### Step 3: Sit Back and Watch Them Build! ☕
-- **Pane 2 (`opencode`)**: Automatically claims the backend task, writes the API/logic in `Jarvis-backend`, and commits to `agent/backend`.
-- **Pane 3 (`cline`)**: Automatically claims the frontend task, builds the UI in `Jarvis-frontend`, and commits to `agent/frontend`.
-- **Pane 4 (`kilo`)**: Automatically detects when they finish, runs smoke tests, applies **`ponytail-review`** to strip out any code bloat, and merges the branches into `main`!
-
----
-
-### Helper Commands Cheat Sheet
-
-| Action | Command | Where to Run |
-|---|---|---|
-| **Dispatch New Goal** | `python swarm/dispatch.py "feature description"` | Pane 1 (Lead) |
-| **View Live Task Status** | `python swarm/swarm_helper.py list` | Any Pane |
-| **Get Task Details** | `python swarm/swarm_helper.py get --id <ID>` | Any Pane |
-| **Clear Finished Tasks** | `python swarm/swarm_helper.py clear --yes` | Pane 1 |
-| **Manually Claim Task** | `python ../Jarvis/swarm/swarm_helper.py next --role <role> --claim` | Panes 2 / 3 |
-
----
-
-## Part 3: Automatic Token Exhaustion Fallback
-If `opencode`, `cline`, or `kilo` ever runs out of tokens or crashes mid-task:
-- The worker daemon automatically catches the error.
-- The partial work is preserved untouched.
-- The task is seamlessly handed off to **`agy`** (Google Gemini Pro 1M+ token context) to finish the implementation and commit without stopping the pipeline!
+## 4. Key Capabilities
+- **Voice Pipeline**: openWakeWord (`Hey Jarvis`) + Silero VAD + faster-whisper (CPU int8) + Piper neural TTS.
+- **3-Tier AI Router**: Flash Tier (`qwen2.5:3b` in 4GB GPU VRAM) + Pro Coder Tier (`qwen3-coder:30b` in CPU RAM) + Vision Tier (`gemma4:e4b`).
+- **Tools**: Real YouTube playback (`play_youtube`), safe URL navigation (`open_url`), system diagnosis, RAG second brain (`rag.py`), autonomous background pulse (`pulse.py`), and smart home controls.
