@@ -6,9 +6,9 @@ import numpy as np
 import sounddevice as sd
 
 SAMPLE_RATE = 16000
-BLOCK_SIZE = 1024                 # ~64 ms per block
-RMS_THRESHOLD = 500               # int16 amplitude; raise if speakers echo-trigger it
-MIN_SPEECH_BLOCKS = 3             # ~192 ms of sustained loud audio before interrupting
+BLOCK_SIZE = 1024  # ~64 ms per block
+RMS_THRESHOLD = 300  # lowered significantly due to quiet mic
+MIN_SPEECH_BLOCKS = 3  # ~192 ms of sustained loud audio before interrupting
 MAX_BUFFER_BLOCKS = int(12 * SAMPLE_RATE / BLOCK_SIZE)  # keep ~12 s of rolling audio
 
 
@@ -59,7 +59,7 @@ class SpeechInterruptMonitor:
             self._stream = sd.InputStream(
                 samplerate=SAMPLE_RATE,
                 channels=1,
-                dtype='int16',
+                dtype="int16",
                 blocksize=BLOCK_SIZE,
                 callback=self._callback,
             )
@@ -97,8 +97,13 @@ class UtteranceRecorder:
         self.sample_rate = sample_rate
         self.block_size = block_size
 
-    def record(self, max_wait: float = 8.0, min_silence: float = 0.7,
-               pre_roll: float = 0.5, max_utterance: float = 15.0):
+    def record(
+        self,
+        max_wait: float = 8.0,
+        min_silence: float = 0.7,
+        pre_roll: float = 0.5,
+        max_utterance: float = 15.0,
+    ):
         """Blocks until an utterance is captured.
 
         Args:

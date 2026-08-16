@@ -1,26 +1,23 @@
 import os
-
-import numpy as np
-from scipy.io import wavfile
-from faster_whisper import WhisperModel
-import keyboard
-import sounddevice as sd
 import time
 
+import keyboard
 import noisereduce as nr
-
+import numpy as np
+import sounddevice as sd
+from faster_whisper import WhisperModel
+from scipy.io import wavfile
 from vad import UtteranceRecorder
 
 _model = None
 TEMP_WAV = "temp.wav"
 
-# Set to False if noise reduction feels too slow on your CPU.
-USE_NOISE_REDUCTION = True
+# Set to False if noise reduction feels too slow on your CPU or mutes speech.
+USE_NOISE_REDUCTION = False
 
 
 def get_whisper_model() -> WhisperModel:
-    """Loads and caches the WhisperModel in memory to prevent reloading from disk.
-    """
+    """Loads and caches the WhisperModel in memory to prevent reloading from disk."""
     global _model
     if _model is None:
         _model = WhisperModel("base.en", device="cpu", compute_type="int8")
@@ -72,7 +69,7 @@ def transcribe_audio(audio, sample_rate: int = 16000) -> str:
     if audio is None or len(audio) == 0:
         return ""
 
-    audio = _normalize(audio, sample_rate)
+    audio = _normalize(audio)
     if USE_NOISE_REDUCTION:
         audio = _reduce_noise(audio, sample_rate)
 
@@ -119,33 +116,29 @@ def listen_and_transcribe_ptt(key: str = "ctrl") -> str:
         str: The transcribed text.
     """
     print(f"\nHOLD [{key.upper()}] TO TALK...")
-    
+
     # Wait for the key to be pressed
     while not keyboard.is_pressed(key):
         time.sleep(0.05)
-        
+
     print("Recording... Speak now! Release key to send.")
     audio_chunks = []
-    
+
     def callback(indata, frames, time_info, status):
         audio_chunks.append(indata.copy())
-        
+
     stream = sd.InputStream(
-        samplerate=16000,
-        channels=1,
-        dtype='int16',
-        blocksize=1024,
-        callback=callback
+        samplerate=16000, channels=1, dtype="int16", blocksize=1024, callback=callback
     )
-    
+
     with stream:
         while keyboard.is_pressed(key):
             time.sleep(0.05)
-            
+
     print("Recording stopped. Transcribing...")
     if not audio_chunks:
         return ""
-        
+
     audio = np.concatenate(audio_chunks)[:, 0]
     return transcribe_audio(audio)
 
@@ -155,4 +148,3 @@ if __name__ == "__main__":
     text = listen_and_transcribe()
     print("Transcription:")
     print(text)
-

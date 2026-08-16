@@ -23,3 +23,6 @@ jarvis_project/*.db
 
 # Sandbox test files
 jarvis_project/sandbox/
+
+# Log files
+*.log

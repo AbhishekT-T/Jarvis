@@ -1,5 +1,5 @@
-import sqlite3
 import os
+import sqlite3
 
 DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jarvis_memory.db")
 MAX_TURNS = 20  # Load up to 20 turns (40 messages) into conversation context
@@ -26,6 +26,16 @@ def init_db() -> None:
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # Table for scheduled reminders and pulse alerts
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS reminders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT NOT NULL,
+                due_timestamp TEXT NOT NULL,
+                completed INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         conn.commit()
 
 
@@ -38,7 +48,7 @@ def load_history() -> list:
             # Fetch the most recent messages, then reverse them so they are in chronological order
             cursor.execute(
                 "SELECT role, content FROM history ORDER BY id DESC LIMIT ?",
-                (MAX_TURNS * 2,)
+                (MAX_TURNS * 2,),
             )
             rows = cursor.fetchall()
             history = []
@@ -56,8 +66,7 @@ def append_message(role: str, content: str) -> None:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO history (role, content) VALUES (?, ?)",
-                (role, content)
+                "INSERT INTO history (role, content) VALUES (?, ?)", (role, content)
             )
             conn.commit()
     except sqlite3.Error:
@@ -102,11 +111,11 @@ def get_facts(query: str = None) -> list:
             if query:
                 cursor.execute(
                     "SELECT id, fact, timestamp FROM facts WHERE fact LIKE ? ORDER BY id DESC",
-                    (f"%{query}%",)
+                    (f"%{query}%",),
                 )
             else:
                 cursor.execute("SELECT id, fact, timestamp FROM facts ORDER BY id DESC")
-            
+
             rows = cursor.fetchall()
             return [{"id": r[0], "fact": r[1], "timestamp": r[2]} for r in rows]
     except sqlite3.Error:
@@ -120,6 +129,68 @@ def delete_fact(fact_id: int) -> bool:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM facts WHERE id = ?", (fact_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+    except sqlite3.Error:
+        return False
+
+
+def add_reminder(text: str, due_timestamp: str) -> int:
+    """Saves a scheduled reminder to the database and returns its row ID."""
+    init_db()
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO reminders (text, due_timestamp, completed) VALUES (?, ?, 0)",
+                (text, due_timestamp),
+            )
+            conn.commit()
+            return cursor.lastrowid
+    except sqlite3.Error:
+        return -1
+
+
+def get_pending_reminders() -> list:
+    """Returns all active, uncompleted reminders."""
+    init_db()
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, text, due_timestamp, created_at FROM reminders WHERE completed = 0 ORDER BY due_timestamp ASC"
+            )
+            rows = cursor.fetchall()
+            return [
+                {"id": r[0], "text": r[1], "due_timestamp": r[2], "created_at": r[3]}
+                for r in rows
+            ]
+    except sqlite3.Error:
+        return []
+
+
+def mark_reminder_completed(reminder_id: int) -> bool:
+    """Marks a reminder as completed by its ID."""
+    init_db()
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE reminders SET completed = 1 WHERE id = ?", (reminder_id,)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+    except sqlite3.Error:
+        return False
+
+
+def delete_reminder(reminder_id: int) -> bool:
+    """Deletes a reminder from the database."""
+    init_db()
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
             conn.commit()
             return cursor.rowcount > 0
     except sqlite3.Error:

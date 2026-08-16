@@ -1,25 +1,27 @@
 import datetime
-import threading
-import time
-import shutil
-import psutil
-
 import sys
 
 import llm
 import memory
+import pulse
 
 TEXT_MODE = "--text" in sys.argv
 
 if not TEXT_MODE:
+    # pyrefly: ignore [missing-import]
     import sounddevice as sd
     import stt
     import tts
 
 EXIT_COMMANDS = {"quit", "exit", "stop", "goodbye"}
 FORGET_COMMANDS = {
-    "forget", "forget everything", "clear memory", "clear history", "wipe memory",
-    "erase your memory", "delete your memory",
+    "forget",
+    "forget everything",
+    "clear memory",
+    "clear history",
+    "wipe memory",
+    "erase your memory",
+    "delete your memory",
 }
 
 
@@ -29,7 +31,9 @@ def _print_audio_info() -> None:
         return
     try:
         device = sd.query_devices(kind="input")
-        print(f"Audio input: {device['name']} | {device.get('default_samplerate', 44100):.0f} Hz")
+        print(
+            f"Audio input: {device['name']} | {device.get('default_samplerate', 44100):.0f} Hz"
+        )
         print(f"Audio output: {sd.query_devices(kind='output')['name']}")
     except Exception as e:
         print(f"Could not query audio devices: {e}")
@@ -49,61 +53,25 @@ def _normalize(text: str) -> str:
     return text.lower().strip(" ,.?!")
 
 
-def _monitor_system() -> None:
-    """Continuously monitors system vitals in the background and announces warnings if thresholds are exceeded.
-    """
-    # Wait 10 seconds initially so it doesn't speak over the startup greeting
-    time.sleep(10)
-    while True:
-        try:
-            # Check vitals every 60 seconds
-            time.sleep(60)
-            
-            # 1. Check Disk Space on C:
-            try:
-                _, _, free = shutil.disk_usage("C:\\")
-                free_gb = free / (1024 ** 3)
-                if free_gb < 5.0:
-                    msg = f"System alert, sir. Storage space on drive C is critically low, with only {free_gb:.1f} gigabytes remaining."
-                    print(f"\n[SYSTEM MONITOR ALERT] {msg}\n")
-                    if not TEXT_MODE:
-                        tts.speak(msg)
-                    continue
-            except Exception:
-                pass
-                
-            # 2. Check CPU utilization
-            cpu = psutil.cpu_percent(interval=1)
-            if cpu > 90.0:
-                msg = f"System alert, sir. CPU utilization is critically high at {cpu:.0f} percent."
-                print(f"\n[SYSTEM MONITOR ALERT] {msg}\n")
-                if not TEXT_MODE:
-                    tts.speak(msg)
-                continue
-                
-            # 3. Check Memory (RAM) utilization
-            ram = psutil.virtual_memory().percent
-            if ram > 90.0:
-                msg = f"System alert, sir. Memory utilization is critically high at {ram:.0f} percent."
-                print(f"\n[SYSTEM MONITOR ALERT] {msg}\n")
-                if not TEXT_MODE:
-                    tts.speak(msg)
-                continue
-                
-        except Exception:
-            pass
-
-
 def main() -> None:
     # Restore memory from previous sessions so JARVIS "remembers" you.
     history = memory.load_history()
 
     _print_audio_info()
-    
-    # Start background live system monitor thread
-    monitor_thread = threading.Thread(target=_monitor_system, daemon=True)
-    monitor_thread.start()
-    
+
+    # Define proactive audio callback for unprompted Pulse announcements
+    def _on_pulse_speak(announcement_text: str) -> None:
+        if not TEXT_MODE:
+            tts.speak(announcement_text)
+
+    # Initialize and start the autonomous Background Cron-Agent (The "Pulse")
+    pulse_engine = pulse.init_pulse_agent(
+        on_speak=_on_pulse_speak,
+        history_ref=history,
+        is_text_mode=TEXT_MODE,
+    )
+    pulse_engine.start()
+
     if TEXT_MODE:
         mode_choice = "0"
     else:
@@ -117,12 +85,13 @@ def main() -> None:
         mode_choice = input("Enter option (1/2/3/4) [3]: ").strip()
         if mode_choice not in {"1", "2", "3", "4"}:
             mode_choice = "3"
-        
+
     detector = None
     if mode_choice in {"1", "3"} and not TEXT_MODE:
         from wakeword import WakeWordDetector
+
         detector = WakeWordDetector()
-        
+
     greeting_msg = f"{_greeting()}, sir. Jarvis online."
     if not TEXT_MODE:
         tts.speak(greeting_msg)
@@ -130,7 +99,7 @@ def main() -> None:
         print(f"JARVIS: {greeting_msg}")
 
     print("JARVIS is active. (Say 'exit' or 'quit' to stop).")
-    
+
     if TEXT_MODE:
         print("Listening: Text mode active. Type your message...")
     elif mode_choice == "3":
@@ -149,20 +118,27 @@ def main() -> None:
                 user_text = input("\nYou: ").strip()
             elif mode_choice == "1":
                 detector.listen_for_wake_word()
+                pulse.coordinator.start_user_interaction()
                 user_text = stt.listen_and_transcribe()
             elif mode_choice == "2":
+                pulse.coordinator.start_user_interaction()
                 user_text = stt.listen_and_transcribe_ptt(key="ctrl")
             elif mode_choice == "3":
                 trigger = detector.listen_for_wake_word_or_ptt(ptt_key="ctrl")
+                pulse.coordinator.start_user_interaction()
                 if trigger == "ptt":
                     user_text = stt.listen_and_transcribe_ptt(key="ctrl")
                 else:
                     user_text = stt.listen_and_transcribe()
             else:
+                pulse.coordinator.start_user_interaction()
                 user_text = stt.listen_and_transcribe()
 
             if not user_text:
+                pulse.coordinator.end_user_interaction()
                 continue
+
+            pulse.coordinator.start_user_interaction()
 
             # A single "utterance" can chain when the user interrupts JARVIS.
             while user_text:
@@ -171,6 +147,7 @@ def main() -> None:
                     print(f"JARVIS: {goodbye_msg}")
                     if not TEXT_MODE:
                         tts.speak(goodbye_msg)
+                    pulse_engine.stop()
                     return
 
                 if _normalize(user_text) in FORGET_COMMANDS:
@@ -186,18 +163,18 @@ def main() -> None:
                     print(f"You: {user_text}")
 
                 # Save user message to database in real-time
-                memory.append_message('user', user_text)
+                memory.append_message("user", user_text)
 
                 # Query LLM with history
                 response = llm.query_jarvis(user_text, history)
                 print(f"JARVIS: {response}")
 
                 # Save assistant response to database in real-time
-                memory.append_message('assistant', response)
+                memory.append_message("assistant", response)
 
                 # Update local in-memory history list
-                history.append({'role': 'user', 'content': user_text})
-                history.append({'role': 'assistant', 'content': response})
+                history.append({"role": "user", "content": user_text})
+                history.append({"role": "assistant", "content": response})
 
                 # Speak; if the user interrupts, JARVIS stops instantly.
                 # The audio that overlapped his speech is polluted by his own
@@ -209,15 +186,18 @@ def main() -> None:
                         if not user_text:
                             break
                         continue
-                
+
                 break  # Exit the inner loop if not interrupted to listen again
 
+            pulse.coordinator.end_user_interaction()
 
         except KeyboardInterrupt:
             print("\nOffline.")
+            pulse_engine.stop()
             break
         except Exception as e:
             print(f"Error in main loop: {e}")
+            pulse.coordinator.end_user_interaction()
 
 
 if __name__ == "__main__":

@@ -17,7 +17,9 @@
 9. [File: vad.py](#file-vadpy--voice-activity-detection)
 10. [File: wakeword.py](#file-wakewordpy--wake-word-detection)
 11. [File: memory.py](#file-memorypy--persistent-memory)
-12. [Scrapped: The Sandbox Evaluator Loop](#scrapped-the-sandbox-evaluator-loop)
+12. [File: pulse.py](#file-pulsepy--autonomous-background-cron-agent-the-pulse)
+13. [File: rag.py](#file-ragpy--local-document-rag-second-brain)
+14. [Scrapped: The Sandbox Evaluator Loop](#scrapped-the-sandbox-evaluator-loop)
 
 ---
 
@@ -225,7 +227,7 @@ Uses `shutil.disk_usage()` and `psutil` — no external tools needed.
 
 `llm.py` is the actual intelligence layer. It:
 - Gives JARVIS its personality and live context awareness.
-- Defines 16 tools the model can call.
+- Defines 22 tools the model can call.
 - Runs a multi-turn tool loop until the model produces a plain text answer.
 - Routes every tool call to the right Python function.
 
@@ -264,7 +266,7 @@ f"OS: {platform.system()} {platform.release()}"
 
 ---
 
-### The 16 Tools
+### The 22 Tools
 
 Defined in `available_tools` as a list of JSON Schema objects that Ollama reads to know what it can call:
 
@@ -275,6 +277,7 @@ Defined in `available_tools` as a list of JSON Schema objects that Ollama reads 
 | `get_system_stats` | System Info | CPU, RAM, GPU percentages |
 | `run_cmd` | System Info | Run safe read-only PowerShell commands |
 | `check_disk_space` | System Info | Disk total/used/free for a drive |
+| `get_weather` | Web | Live weather via wttr.in |
 | `jarvis_search` | Web | Google search via Playwright |
 | `describe_screen` | Vision | OCR all text on screen |
 | `capture_and_analyze_screen` | Vision | Gemma 4 vision model answers questions about screen |
@@ -286,6 +289,11 @@ Defined in `available_tools` as a list of JSON Schema objects that Ollama reads 
 | `remember_fact` | Memory | Saves a fact about the user to SQLite |
 | `recall_facts` | Memory | Searches saved facts |
 | `forget_fact` | Memory | Deletes a saved fact by ID |
+| `read_local_file` | File Executor | Reads any local text file (refuses credentials/binary) |
+| `write_local_file` | File Executor | Writes a file after a Y/N keystroke confirmation |
+| `confirm_and_run_command` | Command Executor | Runs PowerShell after a manual Y/N keystroke |
+| `index_documents` | Local RAG | Indexes a folder into the knowledge base |
+| `search_documents` | Local RAG | Searches the knowledge base by similarity |
 
 ---
 
@@ -515,6 +523,22 @@ These three functions just call `memory.py` and format the output nicely:
 - `remember_fact(fact)` → `memory.add_fact(fact)` → returns ID confirmation.
 - `recall_facts(query)` → `memory.get_facts(query)` → formats as a readable list with IDs.
 - `forget_fact(fact_id)` → `memory.delete_fact(fact_id)` → confirms deletion.
+
+---
+
+### Local File Executor
+
+- `read_local_file(path)` — reads any local text file (binary-safe read, then decoded). Refuses credential files (`.env`, `id_rsa`, `*.pem`, `*.key`, `*.p12`, `*.pfx`) and binary content (NUL-byte check); truncates output at 200KB. Uses `_normalize_path()` to fix a model habit of writing drive paths as `\M\coding\...` instead of `M:\coding\...`.
+- `write_local_file(path, content)` — writes a file after ALWAYS asking for a manual Y/N keystroke (destructive overwrites are irreversible). Blocks writes into `.venv`, `.git`, `__pycache__`, `.jarvis_backups`, `voices`; caps content at 500KB and rejects NUL bytes.
+
+### Safe Command Execution
+
+- `confirm_and_run_command(command)` — runs arbitrary PowerShell, but first prints the command and blocks until the user physically types 'y' at the console (`_confirm`). 60s timeout, output capped at 8000 chars. This is the escape hatch for powerful commands that `run_cmd`'s safelist would refuse — human confirmation is the safety mechanism.
+
+### RAG Delegators
+
+- `index_documents(folder_path)` → `rag.index_documents(...)` — builds the knowledge base from a folder.
+- `search_documents(query, top_k=5)` → `rag.search_documents(...)` — similarity search over the knowledge base.
 
 ---
 
@@ -905,6 +929,61 @@ Database file: `jarvis_project/jarvis_memory.db` (created automatically).
 
 ---
 
+## File: `pulse.py` — Autonomous Background Cron-Agent (The "Pulse")
+
+**Location:** `jarvis_project/pulse.py`  
+**Role:** Runs a lightweight background daemon loop to monitor events, model downloads, hardware/thermal health, daily morning briefings, and scheduled reminders, triggering the Flash Tier (`qwen2.5:3b`) to speak unprompted in character.
+
+---
+
+### What it does
+
+- **Background Daemon Thread (`PulseEngine`)**: Starts on assistant initialization, evaluates registered triggers periodically (ticks every 2 seconds with negligible CPU overhead).
+- **Turn Coordination (`TurnCoordinator`)**: Prevents unprompted speech or background LLM calls from colliding with active user speech or audio output.
+- **Event-Driven Triggers**:
+  - `ModelDownloadTrigger`: Detects when an Ollama model download completes (e.g. `qwen3-coder:30b`, `gemma4:e4b`, `nomic-embed-text`) and announces it unprompted.
+  - `HardwareSpikeTrigger`: Monitors CPU/GPU temperatures, sustained CPU load (>92%), memory usage (>92%), and low disk space (<5 GB) with top-process diagnosis and cooldown debouncing.
+  - `DailyBriefingTrigger`: Autonomously delivers a morning briefing at 8:00 AM (or user-configured time) with live weather, time/date, and system vitals.
+  - `ReminderTrigger`: Polls persistent reminders in SQLite (`memory.py`) and announces them when due.
+- **Flash Tier Unprompted Speech (`generate_unprompted_speech`)**: Uses GPU-pinned `qwen2.5:3b` with a specialized proactive system prompt to generate rich, spoken-style announcements in Tony Stark's JARVIS persona.
+- **Memory Synchronization**: Appends proactive announcements to `history` and SQLite database so conversation context remains intact.
+
+---
+
+## File: `rag.py` — Local Document RAG (Second Brain)
+
+**Location:** `jarvis_project/rag.py`  
+**Role:** Builds and queries a fully local, searchable knowledge base from a folder of documents.
+
+---
+
+### What it does
+
+- `index_documents(folder_path)` walks a folder recursively, skips protected dirs (`.venv`, `.git`, `__pycache__`, `.jarvis_backups`, `voices`), chunks text (~500 chars, 50 overlap), embeds each chunk with `ollama.embeddings(model="nomic-embed-text")`, and stores everything in SQLite (`jarvis_rag.db`).
+- `search_documents(query, top_k)` embeds the query and returns the most similar chunks by brute-force cosine similarity, with source file paths and snippets.
+- Supports `.txt/.md/.py/.json/.csv` natively and `.pdf` via `pypdf` (skips PDFs with a hint if `pypdf` is missing).
+- `clear_index()` wipes the knowledge base; `get_index_stats()` reports counts.
+
+### Database Schema
+
+```sql
+CREATE TABLE IF NOT EXISTS documents (id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS chunks (id INTEGER PRIMARY KEY AUTOINCREMENT, doc_id INTEGER NOT NULL,
+                                   text TEXT NOT NULL, embedding BLOB NOT NULL);
+```
+
+Embeddings are stored as raw `numpy.float32` bytes (`emb.tobytes()`) and loaded back with `np.frombuffer(..., dtype=np.float32)` — no vector database needed.
+
+### Safety / Notes
+
+- Fully local — no cloud embedding API. Embedding model is small and CPU-only.
+- `init_db()` runs on import and defensively per call (same pattern as `memory.py`).
+- Re-indexing the same folder creates duplicate chunks; call `clear_index()` first if content changed.
+
+---
+
+---
+
 ## SCRAPPED: The Sandbox Evaluator Loop (Generator / Critic / Reviser)
 
 The fully autonomous self-evolution loop `sandbox_tools.py`, `self_evolve.py`, and
@@ -923,11 +1002,13 @@ The surviving safety mechanism is `apply_code_change()` in `tools.py`, which bac
 
 | File | Lines | Depends On | Used By |
 |------|-------|------------|---------|
-| `main.py` | 224 | `stt`, `llm`, `tts`, `memory`, `wakeword` | — (entry point) |
-| `llm.py` | 468 | `ollama`, `tools` | `main.py` |
-| `tools.py` | 854 | `psutil`, `playwright`, `ollama`, `memory` | `llm.py` |
+| `main.py` | 224 | `stt`, `llm`, `tts`, `memory`, `wakeword`, `pulse` | — (entry point) |
+| `pulse.py` | ~450 | `ollama`, `psutil`, `memory`, `tools` | `main.py`, `tools.py` |
+| `llm.py` | ~650 | `ollama`, `tools` | `main.py`, `pulse.py` |
+| `tools.py` | ~1100 | `psutil`, `playwright`, `ollama`, `memory`, `rag`, `pulse` | `llm.py` |
 | `stt.py` | 158 | `faster_whisper`, `vad`, `noisereduce` | `main.py` |
-| `tts.py` | 137 | `piper`, `pyttsx3`, `vad`, `sounddevice` | `main.py` |
+| `tts.py` | 137 | `piper`, `pyttsx3`, `vad`, `sounddevice` | `main.py`, `pulse.py` |
 | `vad.py` | 166 | `sounddevice`, `numpy` | `stt.py`, `tts.py` |
 | `wakeword.py` | 79 | `openwakeword`, `sounddevice` | `main.py` |
-| `memory.py` | 130 | `sqlite3` | `main.py`, `tools.py` |
+| `memory.py` | ~180 | `sqlite3` | `main.py`, `tools.py`, `pulse.py` |
+| `rag.py` | ~200 | `sqlite3`, `ollama`, `numpy`, `pypdf` | `tools.py` |

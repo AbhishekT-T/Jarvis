@@ -43,6 +43,7 @@ The fully autonomous self-evolution loop (`sandbox_tools.py`, `self_evolve.py`, 
 
 ## 4. Utility Sub-Agents (Background Toolsets)
 
+- **The Autonomous Cron-Agent ("The Pulse", `pulse.py`):** Runs a silent secondary thread monitoring model downloads, hardware/thermal spikes, daily 8:00 AM morning briefings, and scheduled reminders, triggering the Flash Tier to speak unprompted in character.
 - **The Live Data Agent (`jarvis_search`):** Playwright-based Google search. Overcomes local models' static training cutoffs by fetching real-time 2026 data before answering.
 - **The Persistent Memory Agent (`remember_fact` / `recall_facts` / `forget_fact`):** Stores personal context (e.g. car mileage, hardware specs) in SQLite (`jarvis_memory.db`), giving JARVIS long-term memory across reboots. Conversation history is also persisted there.
 - **The Wake Word Gatekeeper (`wakeword.py`):** openWakeWord (ONNX) offline trigger ("Hey Jarvis") with an ultra-low CPU footprint, so the mic loop never maxes out the Ryzen when idle. Also supports Push-to-Talk (hold CTRL) and Always-Listening (classic VAD) modes.
@@ -53,14 +54,16 @@ The fully autonomous self-evolution loop (`sandbox_tools.py`, `self_evolve.py`, 
 
 ```
 jarvis_project/
- tools.py       # OS actions + Pro/Vision tier delegation + self-modification
+ tools.py       # OS actions + Pro/Vision tier delegation + self-modification + Pulse tools
  stt.py         # Microphone capture & faster-whisper CPU transcription
  tts.py         # Local CPU TTS (Piper) with barge-in; pyttsx3 fallback
  vad.py         # Voice-activity detection (UtteranceRecorder + barge-in monitor)
  wakeword.py    # openWakeWord "Hey Jarvis" gatekeeper (ONNX, CPU)
- memory.py      # SQLite persistent memory (history + facts)
- llm.py         # Flash Tier Ollama interface, 16 tool definitions, tool loop
- main.py        # Core Orchestrator event loop (voice loop, monitor thread, --text mode)
+ memory.py      # SQLite persistent memory (history + facts + reminders)
+ pulse.py       # Autonomous background Cron-Agent + event triggers + unprompted Flash speech
+ rag.py         # Local Document RAG "Second Brain" (SQLite + nomic-embed-text embeddings)
+ llm.py         # Flash Tier Ollama interface, 26 tool definitions, tool loop
+ main.py        # Core Orchestrator event loop (voice loop, pulse lifecycle, --text mode)
 ```
 
 ---
@@ -80,6 +83,9 @@ Real-world actions with docstrings and type annotations so Ollama can parse them
 - `ask_pro_coder(prompt)` — delegates to Pro Tier (`qwen3-coder:30b`, CPU-only, `keep_alive=0`).
 - Self-inspection/self-modification: `list_project_files`, `read_project_file`, `apply_code_change`, `restore_backup`.
 - Memory delegators: `remember_fact`, `recall_facts`, `forget_fact` (→ `memory.py`).
+- Local File Executor: `read_local_file(path)` (refuses credentials/binary, 200KB cap) and `write_local_file(path, content)` (Y/N keystroke confirm, blocks protected dirs).
+- Safe Command Execution: `confirm_and_run_command(command)` — PowerShell, always waits for a manual Y/N keystroke, 60s timeout.
+- RAG delegators: `index_documents(folder_path)`, `search_documents(query, top_k=5)` (→ `rag.py`).
 
 ### File 2: `stt.py`
 `listen_and_transcribe()` records a full utterance (VAD, pause-detected) and transcribes with `WhisperModel("base.en", device="cpu", compute_type="int8")`. Lazy-cached model, gain normalization, optional `noisereduce`. `listen_and_transcribe_ptt(key)` for push-to-talk.
@@ -98,7 +104,7 @@ SQLite (`jarvis_memory.db`): `history` table (last 20 turns for context) + `fact
 
 ### File 7: `llm.py`
 `query_jarvis(prompt, history)`:
-- Calls `ollama.chat(model=qwen2.5:3b, ..., options={"num_gpu": -1}, keep_alive=-1)` with the 16 available tools.
+- Calls `ollama.chat(model=qwen2.5:3b, ..., options={"num_gpu": -1}, keep_alive=-1)` with the 22 available tools.
 - Runs a multi-step tool loop (max 5 rounds): if Ollama returns `tool_calls`, executes the corresponding function in `tools.py` via `_dispatch_tool`, feeds the output back, and continues until a plain-text answer.
 - Returns the final conversational text.
 

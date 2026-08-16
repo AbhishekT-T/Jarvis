@@ -1,0 +1,70 @@
+{
+  "project": "Jarvis",
+  "updated_at": "2026-08-16T17:39:48.625388+00:00",
+  "tasks": [
+    {
+      "id": 1,
+      "title": "Backend implementation for:  add a feature where jarvis can upgrade him self",
+      "role": "backend",
+      "assigned_tool": "opencode",
+      "description": "Implement required backend APIs/models for:  add a feature where jarvis can upgrade him self. Use stdlib & native features (Ponytail rules).",
+      "status": "in_progress",
+      "branch": "agent/backend",
+      "created_at": "2026-08-16T17:32:41.171698+00:00",
+      "claimed_at": "2026-08-16T17:38:29.970282+00:00"
+    },
+    {
+      "id": 2,
+      "title": "Frontend implementation for:  add a feature where jarvis can upgrade him self",
+      "role": "frontend",
+      "assigned_tool": "cline",
+      "description": "Implement required UI/client views for:  add a feature where jarvis can upgrade him self.",
+      "status": "in_progress",
+      "branch": "agent/frontend",
+      "created_at": "2026-08-16T17:32:41.171722+00:00",
+      "claimed_at": "2026-08-16T17:39:15.151658+00:00"
+    },
+    {
+      "id": 3,
+      "title": "QA, Tests & Ponytail review for:  add a feature where jarvis can upgrade him self",
+      "role": "qa",
+      "assigned_tool": "kilo",
+      "description": "Test implementation, run ponytail-review to eliminate bloat, then merge to main.",
+      "status": "pending",
+      "branch": "agent/qa",
+      "created_at": "2026-08-16T17:32:41.171728+00:00"
+    },
+    {
+      "id": 4,
+      "title": "Backend implementation for: add a feature where jarvis can upgrade himself",
+      "role": "backend",
+      "assigned_tool": "opencode",
+      "description": "Implement required backend APIs/models for: add a feature where jarvis can upgrade himself. Use stdlib & native features (Ponytail rules).",
+      "status": "in_progress",
+      "branch": "agent/backend",
+      "created_at": "2026-08-16T17:37:31.164071+00:00",
+      "claimed_at": "2026-08-16T17:39:15.649152+00:00"
+    },
+    {
+      "id": 5,
+      "title": "Frontend implementation for: add a feature where jarvis can upgrade himself",
+      "role": "frontend",
+      "assigned_tool": "cline",
+      "description": "Implement required UI/client views for: add a feature where jarvis can upgrade himself.",
+      "status": "in_progress",
+      "branch": "agent/frontend",
+      "created_at": "2026-08-16T17:37:31.164094+00:00",
+      "claimed_at": "2026-08-16T17:39:48.625370+00:00"
+    },
+    {
+      "id": 6,
+      "title": "QA, Tests & Ponytail review for: add a feature where jarvis can upgrade himself",
+      "role": "qa",
+      "assigned_tool": "kilo",
+      "description": "Test implementation, run ponytail-review to eliminate bloat, then merge to main.",
+      "status": "pending",
+      "branch": "agent/qa",
+      "created_at": "2026-08-16T17:37:31.164101+00:00"
+    }
+  ]
+}

@@ -6,10 +6,9 @@ import numpy as np
 import sounddevice as sd
 from scipy.io import wavfile
 
-from vad import SpeechInterruptMonitor
-
 try:
     from piper import PiperVoice
+
     _PIPER_AVAILABLE = True
 except ImportError:
     _PIPER_AVAILABLE = False
@@ -37,7 +36,7 @@ def _get_pyttsx3_engine():
     global _tts_engine
     if _tts_engine is None:
         _tts_engine = pyttsx3.init()
-        _tts_engine.setProperty('rate', 170)
+        _tts_engine.setProperty("rate", 170)
     return _tts_engine
 
 
@@ -55,47 +54,24 @@ def _synth_piper_audio(text: str):
 
 
 def _speak_piper_bargeable(text: str) -> bool:
-    """Plays Piper audio while listening for the user to interrupt.
-
-    On interrupt, playback is aborted instantly so no echo tail continues.
-
-    Returns:
-        bool: True if the user interrupted JARVIS mid-speech.
-    """
-    monitor = SpeechInterruptMonitor()
-    if not monitor.arm():
-        # Mic unavailable - fall back to plain blocking playback.
-        monitor.close()
-        fs, audio = _synth_piper_audio(text)
-        sd.play(audio, fs)
-        sd.wait()
-        return False
-
-    try:
-        fs, audio = _synth_piper_audio(text)
-        chunk = 2048  # ~93 ms at 22 kHz -> fast interrupt checks
-        interrupted = False
-
-        try:
-            with sd.OutputStream(samplerate=fs, channels=1, dtype='int16') as out:
-                for start in range(0, len(audio), chunk):
-                    if monitor.was_interrupted():
-                        interrupted = True
-                        out.abort()  # stop playback NOW, don't flush buffered audio
-                        break
-                    out.write(audio[start:start + chunk])
-                if not interrupted:
-                    # A short grace window catches speech that starts as JARVIS finishes.
-                    interrupted = monitor.wait(timeout=0.1)
-        except Exception:
-            # Stream playback failed - fall back to plain blocking playback.
-            sd.play(audio, fs)
-            sd.wait()
-            interrupted = False
-
-        return interrupted
-    finally:
-        monitor.close()
+    """Plays Piper audio. Barge-in disabled for mic, but enabled for CTRL key."""
+    import keyboard
+    import time
+    
+    fs, audio = _synth_piper_audio(text)
+    sd.play(audio, fs)
+    
+    duration = len(audio) / fs
+    start_time = time.time()
+    
+    while time.time() - start_time < duration:
+        if keyboard.is_pressed('ctrl'):
+            sd.stop()
+            return True
+        time.sleep(0.05)
+        
+    sd.stop()
+    return False
 
 
 def _speak_pyttsx3(text: str) -> None:
@@ -130,7 +106,9 @@ def speak(text: str) -> bool:
 
 
 if __name__ == "__main__":
-    result = speak("Voice synthesis protocols are online, sir. Feel free to interrupt me.")
+    result = speak(
+        "Voice synthesis protocols are online, sir. Feel free to interrupt me."
+    )
     if result:
         print("Interrupted by user.")
     else:
