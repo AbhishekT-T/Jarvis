@@ -85,6 +85,22 @@ def handle_coder_task(task, role, tool_name, worktree_dir):
 
     success = run_cmd(cmd, cwd=worktree_dir)
 
+    # If the assigned tool failed / ran out of tokens, seamlessly fallback to agy
+    if not success and tool_name != "agy":
+        print(f"\n[!] ALERT: {tool_name} failed or ran out of tokens!")
+        print(f"[*] Seamlessly transferring partial work to agy (Backup Heavy Lifter)...")
+        
+        fallback_prompt = (
+            f"HAND-OFF TASK: The previous agent ({tool_name}) encountered an error or ran out of tokens "
+            f"while working on: '{task['title']}'. Original spec: {task.get('description', '')}. "
+            f"Please inspect the current git status and modified files in this worktree, finish the implementation, "
+            f"and adhere strictly to Ponytail simplicity (stdlib/native first, no bloat)."
+        )
+        
+        fallback_cmd = f'agy "{fallback_prompt}"'
+        print(f">> Executing Fallback: {fallback_cmd}")
+        success = run_cmd(fallback_cmd, cwd=worktree_dir)
+
     # 2. Auto-commit changes on agent branch
     print(f"[*] Auto-committing changes to branch agent/{role}...")
     run_cmd("git add .", cwd=worktree_dir)
@@ -96,6 +112,8 @@ def handle_coder_task(task, role, tool_name, worktree_dir):
         if t["id"] == task["id"]:
             t["status"] = "ready_for_review"
             t["completed_at"] = get_utc_now_iso()
+            if not success:
+                t["fallback_to_agy"] = True
     save_tasks(tasks)
 
     print(f"\n[OK] Task #{task['id']} completed and marked READY_FOR_REVIEW!")
