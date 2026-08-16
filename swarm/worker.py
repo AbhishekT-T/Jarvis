@@ -131,9 +131,12 @@ def handle_qa_task(task, worktree_dir):
 
     branch = task.get("branch", "agent/backend")
 
-    # 1. Run tests
+    # 1. Run tests with project venv if available
     print(f"[*] Running automated smoke tests...")
-    test_ok = run_cmd("python tier_smoke_test.py", cwd=worktree_dir)
+    venv_py = os.path.join(worktree_dir, "jarvis_project", ".venv", "Scripts", "python.exe")
+    if not os.path.exists(venv_py):
+        venv_py = "python"
+    test_ok = run_cmd(f'"{venv_py}" tier_smoke_test.py', cwd=worktree_dir)
 
     # 2. Merge to main
     print(f"[*] Merging branch {branch} into main...")
