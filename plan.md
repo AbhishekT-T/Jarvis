@@ -149,6 +149,21 @@ Each entry MUST follow this template:
 
 ---
 
+### [2026-08-16] — Antigravity (Gemini)
+**Files changed:** `swarm/*` *(new)*, `.agents/rules/ponytail.md` *(new)*, `plan.md` *(this file)*
+**What:** Built and deployed the **4-Agent Hybrid CLI Swarm & Ponytail Architecture**:
+1. **Ponytail Integration**: Deployed `ponytail.md` rules and global plugin to enforce YAGNI, standard library first, native platform features, and minimal code diffs across all sessions.
+2. **4-Agent Swarm Orchestrator**:
+   - `swarm/start_swarm.ps1`: Automated launcher opening a 2x2 split grid in Windows Terminal (`wt.exe`) with isolated Git Worktrees (`Jarvis-backend`, `Jarvis-frontend`, `Jarvis-qa`).
+   - `swarm/dispatch.py`: Natural language task refinery and dispatcher.
+   - `swarm/tasks.json` & `swarm/swarm_helper.py`: Shared blackboard state coordination and CLI manager.
+   - `swarm/worker.py`: Autonomous zero-touch watcher daemons with automatic token exhaustion / failure fallback to `agy`.
+3. **Branching**: Created and published the dedicated branch `manual-upgrade-ai-swarm` to GitHub (`origin`).
+**Why:** Enables multi-agent parallel software development on the Jarvis codebase across `agy`, `opencode`, `cline`, and `kilo` without file conflicts or manual context switching.
+**Notes:** Verified end-to-end with live autonomous dispatch runs and clean Git worktree synchronization.
+
+---
+
 ### [2026-08-15] — big-pickle (opencode)
 **Files changed:** `jarvis_project/llm.py`, `plan.md` *(this file)*
 **What:** Fixed a Flash Tier reliability bug found during a live voice session: `qwen2.5:3b` answered disk-space queries ("Check my drive") with a hallucinated Python script inside a code block ("I will execute this script now...") instead of calling `check_disk_space` — the tool loop returned that text instantly because it never produced a `tool_call`. Fixes: (1) added `_strip_code_fences()` — the loop now re-prompts the model ONCE when a plain-text answer contains a code fence (forcing a real tool call), and strips any remaining code fences from the final output before it reaches TTS/console; (2) hardened the system prompt — "NEVER report disk/CPU/RAM/GPU numbers unless a tool returned them — call `check_disk_space`/`get_system_stats` FIRST, never guess", and removed the hardcoded "42 GB free" example from the acknowledgment line (the model was parroting that exact number when it skipped the tool).
