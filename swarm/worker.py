@@ -48,7 +48,12 @@ def save_tasks(tasks):
 def run_cmd(cmd, cwd=None):
     print(f"\n>> Executing: {cmd}")
     try:
-        res = subprocess.run(cmd, shell=True, cwd=cwd, text=True, capture_output=False)
+        # Wrap in powershell on Windows so npm .ps1 scripts run seamlessly
+        if os.name == 'nt':
+            full_cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd]
+            res = subprocess.run(full_cmd, cwd=cwd, text=True, capture_output=False)
+        else:
+            res = subprocess.run(cmd, shell=True, cwd=cwd, text=True, capture_output=False)
         return res.returncode == 0
     except Exception as e:
         print(f"[!] Command failed: {e}", file=sys.stderr)

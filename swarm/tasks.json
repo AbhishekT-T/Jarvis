@@ -1,6 +1,6 @@
 {
   "project": "Jarvis",
-  "updated_at": "2026-08-16T17:39:48.625388+00:00",
+  "updated_at": "2026-08-16T18:12:11.585384+00:00",
   "tasks": [
     {
       "id": 1,
@@ -8,10 +8,13 @@
       "role": "backend",
       "assigned_tool": "opencode",
       "description": "Implement required backend APIs/models for:  add a feature where jarvis can upgrade him self. Use stdlib & native features (Ponytail rules).",
-      "status": "in_progress",
+      "status": "completed",
       "branch": "agent/backend",
       "created_at": "2026-08-16T17:32:41.171698+00:00",
-      "claimed_at": "2026-08-16T17:38:29.970282+00:00"
+      "claimed_at": "2026-08-16T17:38:29.970282+00:00",
+      "updated_at": "2026-08-16T17:49:22.478230+00:00",
+      "notes": "Duplicate of task #4 - same implementation on agent/backend @ f9deae5",
+      "qa_verified_at": "2026-08-16T17:49:24.369807+00:00"
     },
     {
       "id": 2,
@@ -40,10 +43,13 @@
       "role": "backend",
       "assigned_tool": "opencode",
       "description": "Implement required backend APIs/models for: add a feature where jarvis can upgrade himself. Use stdlib & native features (Ponytail rules).",
-      "status": "in_progress",
+      "status": "completed",
       "branch": "agent/backend",
       "created_at": "2026-08-16T17:37:31.164071+00:00",
-      "claimed_at": "2026-08-16T17:39:15.649152+00:00"
+      "claimed_at": "2026-08-16T17:39:15.649152+00:00",
+      "updated_at": "2026-08-16T17:49:22.328452+00:00",
+      "notes": "Implemented in agent/backend @ f9deae5: check_for_updates/self_upgrade/restart_jarvis in tools.py + llm.py wiring. Selftest: python tools.py --selftest",
+      "qa_verified_at": "2026-08-16T17:49:26.625324+00:00"
     },
     {
       "id": 5,
@@ -51,10 +57,13 @@
       "role": "frontend",
       "assigned_tool": "cline",
       "description": "Implement required UI/client views for: add a feature where jarvis can upgrade himself.",
-      "status": "in_progress",
+      "status": "completed",
       "branch": "agent/frontend",
       "created_at": "2026-08-16T17:37:31.164094+00:00",
-      "claimed_at": "2026-08-16T17:39:48.625370+00:00"
+      "claimed_at": "2026-08-16T17:39:48.625370+00:00",
+      "updated_at": "2026-08-16T18:09:29.437097+00:00",
+      "notes": "Frontend self-upgrade UI built: stdlib-only webui.py + self_upgrade.py engine + ui/index.html (Upgrade button, code editor w/ backup-rollback, backups panel). Validated endpoints & rollback; committed a310d38 on agent/frontend.",
+      "qa_verified_at": "2026-08-16T18:12:11.585359+00:00"
     },
     {
       "id": 6,
@@ -65,6 +74,38 @@
       "status": "pending",
       "branch": "agent/qa",
       "created_at": "2026-08-16T17:37:31.164101+00:00"
+    },
+    {
+      "id": 7,
+      "title": "Backend implementation for: test code",
+      "role": "backend",
+      "assigned_tool": "opencode",
+      "description": "Implement required backend APIs/models for: test code. Use stdlib & native features (Ponytail rules).",
+      "status": "in_progress",
+      "branch": "agent/backend",
+      "created_at": "2026-08-16T18:11:02.866895+00:00",
+      "claimed_at": "2026-08-16T18:12:10.151540+00:00"
+    },
+    {
+      "id": 8,
+      "title": "Frontend implementation for: test code",
+      "role": "frontend",
+      "assigned_tool": "cline",
+      "description": "Implement required UI/client views for: test code.",
+      "status": "in_progress",
+      "branch": "agent/frontend",
+      "created_at": "2026-08-16T18:11:02.866941+00:00",
+      "claimed_at": "2026-08-16T18:12:10.291327+00:00"
+    },
+    {
+      "id": 9,
+      "title": "QA, Tests & Ponytail review for: test code",
+      "role": "qa",
+      "assigned_tool": "kilo",
+      "description": "Test implementation, run ponytail-review to eliminate bloat, then merge to main.",
+      "status": "pending",
+      "branch": "agent/qa",
+      "created_at": "2026-08-16T18:11:02.866952+00:00"
     }
   ]
 }
