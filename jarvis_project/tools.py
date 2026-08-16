@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import urllib.parse
 import webbrowser
 import winreg
 from urllib.request import Request, urlopen
@@ -209,6 +210,79 @@ def open_app(app_name: str) -> str:
         return f"Successfully launched {app_name}."
     except Exception as e:
         return f"Failed to launch {app_name}. Error: {e!s}"
+
+
+def open_url(url: str) -> str:
+    """Opens a specific web URL or website in the user's browser.
+
+    Args:
+        url (str): The web URL or domain to open (e.g. 'https://www.youtube.com', 'google.com').
+
+    Returns:
+        str: Status message indicating whether the URL was opened successfully.
+    """
+    url_clean = url.strip()
+    if not url_clean:
+        return "Please provide a valid URL."
+    if not url_clean.startswith(("http://", "https://")):
+        url_clean = "https://" + url_clean
+    if not re.match(r"^https?://[^\s\"']+$", url_clean, re.IGNORECASE):
+        return f"Failed to open website. Invalid URL: {url_clean}"
+    try:
+        running_browser_exe = get_running_browser_exe()
+        if running_browser_exe:
+            subprocess.Popen([running_browser_exe, url_clean])
+            return f"Successfully opened {url_clean} in browser: {os.path.basename(running_browser_exe)}"
+        else:
+            webbrowser.open(url_clean)
+            return f"Successfully opened {url_clean} in default browser."
+    except Exception as e:
+        return f"Failed to open URL {url_clean}. Error: {e!s}"
+
+
+def play_youtube(query: str) -> str:
+    """Searches YouTube and opens/plays the real video directly in the user's browser.
+
+    Args:
+        query (str): The topic, song name, artist, video title, or direct YouTube URL to play.
+
+    Returns:
+        str: Status message confirming playback in the browser.
+    """
+    query_clean = query.strip()
+    if not query_clean:
+        return "Please provide a video title, search term, or YouTube URL."
+
+    # If already a direct YouTube URL, open it immediately
+    if "youtube.com" in query_clean or "youtu.be" in query_clean:
+        return open_url(query_clean)
+
+    encoded_query = urllib.parse.quote_plus(query_clean)
+    search_url = f"https://www.youtube.com/results?search_query={encoded_query}"
+
+    video_url = None
+    try:
+        req = Request(
+            search_url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+        )
+        with urlopen(req, timeout=5) as response:
+            html = response.read().decode("utf-8")
+            video_ids = re.findall(r"watch\?v=([a-zA-Z0-9_-]{11})", html)
+            if video_ids:
+                seen = set()
+                unique = [x for x in video_ids if not (x in seen or seen.add(x))]
+                if unique:
+                    video_url = f"https://www.youtube.com/watch?v={unique[0]}"
+    except Exception:
+        pass
+
+    target_url = video_url if video_url else search_url
+    open_url(target_url)
+
+    if video_url:
+        return f"Playing '{query_clean}' on YouTube ({video_url})"
+    return f"Opened YouTube search for '{query_clean}'"
 
 
 def get_system_stats() -> str:

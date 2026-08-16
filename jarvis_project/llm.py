@@ -91,6 +91,40 @@ available_tools = [
     {
         "type": "function",
         "function": {
+            "name": "play_youtube",
+            "description": "Searches YouTube and plays the real video directly in the user's browser. MUST be called whenever the user asks to play a video, watch a video, play music, or search for a video on YouTube.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The video title, topic, song name, artist, or YouTube URL to play.",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "open_url",
+            "description": "Navigates directly to a web URL or opens a website in the user's web browser.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The URL or web address to open in the browser.",
+                    },
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_weather",
             "description": "Gets the current weather for a specified location or city.",
             "parameters": {
@@ -613,9 +647,15 @@ def _build_system_prompt() -> str:
         "- Be truthful. Never state numbers, results, or outcomes you did not receive from a tool call. Never claim you did something you didn't.\n"
         "- DO NOT call a tool when you can answer from your own knowledge: simple math, general facts, definitions, trivia, or casual chat. Tools are for live/current data, real actions, or system state. A 'fun fact' is a trivia fact to tell, NOT a request to recall memory. Concrete example: for 'what is 2+2?' just answer '4' - do not run any command or tool.\n"
         "- NEVER output code blocks, scripts, or step-by-step manuals. Never say you 'will run/execute' a script - use your tools instead, then report the real result.\n"
+        "- NEVER invent, hallucinate, or output fake placeholder URLs (e.g. 'https://www.youtube.com/watch?v=YourVideoID', 'example.com').\n"
+        "- To play a video, watch YouTube, or listen to music -> ALWAYS call `play_youtube(query)` (e.g. for 'play Minecraft video' call `play_youtube(query='Minecraft gameplay')`).\n"
+        "- To open or navigate to any web URL -> ALWAYS call `open_url(url)` or `open_app(app_name)`.\n"
         "- After completing a task, you MAY suggest ONE genuinely useful next step in a single short sentence, like a smart friend (e.g. after reporting low disk space: 'Want me to run a quick cleanup?'). Suggest only when it clearly adds value; never nag and never tack on a generic 'anything else?' tagline to every reply.\n"
         "\nWHEN TO USE TOOLS - call the tool immediately, then answer from its real output:\n"
-        "- open, launch, or go to a website -> `open_app`. Installing an app -> `check_disk_space` first, then `install_app` (warn if free space is low).\n"
+        "- play videos, music, or search YouTube -> `play_youtube`.\n"
+        "- open a web URL or website -> `open_url` or `open_app`.\n"
+        "- launch apps (notepad, chrome, calculator, etc.) -> `open_app`.\n"
+        "- installing an app -> `check_disk_space` first, then `install_app` (warn if free space is low).\n"
         "- disk space, storage, CPU/RAM/GPU usage, or what is slowing the PC -> `check_disk_space`, `get_system_stats`, `get_top_consumers`, `get_full_system_overview`, `get_top_resource_hogs`, or `analyze_windows_storage`. For an approved cleanup fix, use `execute_admin_fix`.\n"
         "- live information, news, questions about current events -> `jarvis_search`. Weather -> `get_weather`.\n"
         "- anything visible on screen, error popups, UI text -> `describe_screen` or `capture_and_analyze_screen`.\n"
@@ -640,6 +680,7 @@ def _build_system_prompt() -> str:
         f"- Period of day: {period}\n"
         f"- Host machine: {platform.node()}\n"
         f"- OS: {platform.system()} {platform.release()}\n"
+        f"- Default Browser: {tools.get_running_browser_exe() or 'System Default'}\n"
     )
 
 
@@ -654,6 +695,10 @@ def _dispatch_tool(name: str, args: dict) -> str:
     if name == "execute_admin_fix":
         return tools.execute_admin_fix(str(args.get("command", "")))
 
+    if name == "play_youtube":
+        return tools.play_youtube(str(args.get("query", "")))
+    if name == "open_url":
+        return tools.open_url(str(args.get("url", "")))
     if name == "open_app":
         return tools.open_app(str(args.get("app_name", "")))
     if name == "get_weather":
