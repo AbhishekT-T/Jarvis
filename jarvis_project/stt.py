@@ -134,8 +134,12 @@ def listen_and_transcribe_ptt(key: str = "ctrl") -> str:
     with stream:
         while keyboard.is_pressed(key):
             time.sleep(0.05)
+        # Brief flush delay to capture the final audio buffer after key release,
+        # preventing the last syllable from being clipped.
+        time.sleep(0.1)
 
     print("Recording stopped. Transcribing...")
+
     if not audio_chunks:
         return ""
 

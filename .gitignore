@@ -26,3 +26,10 @@ jarvis_project/sandbox/
 
 # Log files
 *.log
+
+# Environment and credentials
+.env
+*.env
+credentials.json
+token.json
+

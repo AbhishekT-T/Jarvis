@@ -6,11 +6,49 @@ import ollama
 import tools
 
 # ── Model Tier Configuration ──────────────────────────────────────────────────
-# Flash Tier (Orchestrator): qwen2.5:3b — the always-on conversation brain.
-#   Locked entirely inside the 4 GB GPU VRAM and kept resident for zero latency.
+# Flash Tier (Default Orchestrator): qwen2.5:3b — the always-on conversation brain.
+#   Locked entirely inside GPU VRAM and kept resident for zero latency.
 FLASH_MODEL = "qwen2.5:3b"
-FLASH_OPTIONS = {"num_gpu": -1}  # offload EVERY layer to the GPU
-FLASH_KEEP_ALIVE = -1  # keep loaded in VRAM for the whole session
+ACTIVE_MODEL = "qwen2.5:3b"
+ACTIVE_OPTIONS = {"num_gpu": -1}  # offload EVERY layer to the GPU
+ACTIVE_KEEP_ALIVE = -1  # keep loaded in VRAM for the whole session
+FLASH_KEEP_ALIVE = -1
+
+
+def get_active_model() -> str:
+    """Returns the name of the currently active primary conversation model."""
+    global ACTIVE_MODEL
+    return ACTIVE_MODEL
+
+
+def set_active_model(model_name: str) -> dict:
+    """Manually switches the active primary conversation model on the fly.
+
+    Adapts offload options and residency based on model size to prevent OOM.
+    """
+    global ACTIVE_MODEL, ACTIVE_OPTIONS, ACTIVE_KEEP_ALIVE
+    model_name = (model_name or "").strip()
+    if not model_name:
+        return {"model": ACTIVE_MODEL, "options": ACTIVE_OPTIONS, "keep_alive": ACTIVE_KEEP_ALIVE}
+
+    ACTIVE_MODEL = model_name
+    # Tailor offload options based on model architecture / size
+    if "30b" in model_name or "26b" in model_name:
+        # Heavy models exceed 4GB VRAM -> run on CPU/RAM with 5-minute residency
+        ACTIVE_OPTIONS = {"num_gpu": 0}
+        ACTIVE_KEEP_ALIVE = "5m"
+    elif "3b" in model_name:
+        # Fast 3B model fits 100% in GPU VRAM -> lock in VRAM
+        ACTIVE_OPTIONS = {"num_gpu": -1}
+        ACTIVE_KEEP_ALIVE = -1
+    else:
+        # Balanced default for 7B/8B/9B models: let Ollama split across GPU and RAM
+        ACTIVE_OPTIONS = {}
+        ACTIVE_KEEP_ALIVE = "10m"
+
+    print(f"[MODEL SWITCH] Active model changed to: {ACTIVE_MODEL} (options={ACTIVE_OPTIONS}, keep_alive={ACTIVE_KEEP_ALIVE})")
+    return {"model": ACTIVE_MODEL, "options": ACTIVE_OPTIONS, "keep_alive": ACTIVE_KEEP_ALIVE}
+
 
 # Define tools for Ollama function calling
 available_tools = [
@@ -619,6 +657,158 @@ available_tools = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_active_window_info",
+            "description": "Inspects and returns the user's currently focused application, window title bar, and category (e.g. VS Code, Slack, Outlook).",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "dictate_into_active_window",
+            "description": (
+                "Transcribes, context-formats, and automatically types/pastes text directly into the user's "
+                "active foreground application (e.g. typing a message in Slack, drafting an email in Outlook, "
+                "or writing code/comments in VS Code). MUST be called when the user asks to type, write, or dictate "
+                "something into their open window."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "The speech content or thoughts to format and type into the active window.",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "description": "Formatting mode: 'smart_format' (formats style for active app) or 'verbatim' (exact words). Default is 'smart_format'.",
+                    },
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_selected_text",
+            "description": "Reads and returns the user's currently highlighted/selected text from any application window. Useful when the user asks 'what did I select' or wants to discuss highlighted text.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_selected_text",
+            "description": (
+                "Rewrites or transforms the user's currently highlighted/selected text based on a spoken instruction "
+                "(e.g. 'make it shorter', 'fix the grammar', 'translate to French', 'add type hints'). "
+                "The edited result replaces the selection in-place in the active window."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "instruction": {
+                        "type": "string",
+                        "description": "What to do with the selected text (e.g. 'fix grammar', 'translate to Spanish', 'make concise').",
+                    },
+                },
+                "required": ["instruction"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "draft_email",
+            "description": (
+                "Prepares an email draft with recipient, subject, and body, and prompts the user for physical "
+                "[Y/N] confirmation before opening the mail composer."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "recipient": {
+                        "type": "string",
+                        "description": "The recipient email address or contact name.",
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "The subject line of the email.",
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "The message body text of the email.",
+                    },
+                },
+                "required": ["recipient", "subject", "body"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "schedule_calendar_event",
+            "description": (
+                "Schedules a calendar event and sets a background reminder. Prompts the user for physical [Y/N] "
+                "confirmation before adding the event and launching the calendar application."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "The title or summary of the calendar event.",
+                    },
+                    "start_time": {
+                        "type": "string",
+                        "description": "The date and time for the event (e.g. 'tomorrow at 3pm', '2026-08-28 15:00').",
+                    },
+                    "duration_minutes": {
+                        "type": "integer",
+                        "description": "Duration of the event in minutes (default 30).",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional description or meeting notes.",
+                    },
+                },
+                "required": ["title", "start_time"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_calendar_events",
+            "description": "Lists all upcoming scheduled calendar events and reminders.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "switch_model",
+            "description": (
+                "Manually switches the active primary conversation model at will. "
+                "Call this whenever the user asks to switch, change, or use a different AI model "
+                "(e.g., 'qwen2.5:3b', 'qwen3-coder:30b', 'gemma4:e4b', 'gemma4:26b')."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "model_name": {
+                        "type": "string",
+                        "description": "The exact name of the installed Ollama model to switch to.",
+                    }
+                },
+                "required": ["model_name"],
+            },
+        },
+    },
 ]
 
 
@@ -659,6 +849,13 @@ def _build_system_prompt() -> str:
         "- disk space, storage, CPU/RAM/GPU usage, or what is slowing the PC -> `check_disk_space`, `get_system_stats`, `get_top_consumers`, `get_full_system_overview`, `get_top_resource_hogs`, or `analyze_windows_storage`. For an approved cleanup fix, use `execute_admin_fix`.\n"
         "- live information, news, questions about current events -> `jarvis_search`. Weather -> `get_weather`.\n"
         "- anything visible on screen, error popups, UI text -> `describe_screen` or `capture_and_analyze_screen`.\n"
+        "- type, write, or dictate text into active window/app (Slack, Outlook, VS Code, etc.) -> `dictate_into_active_window`.\n"
+        "- what app or window is currently open/active -> `get_active_window_info`.\n"
+        "- read whatever text the user has selected/highlighted on screen -> `get_selected_text`.\n"
+        "- rewrite, edit, fix grammar, translate, or transform highlighted/selected text -> `edit_selected_text`.\n"
+        "- draft or send an email -> `draft_email` (always requires Y/N confirmation).\n"
+        "- schedule a calendar event or meeting -> `schedule_calendar_event` (always requires Y/N confirmation).\n"
+        "- view upcoming calendar events or scheduled agenda -> `list_calendar_events`.\n"
         "- a powerful or risky command -> `confirm_and_run_command` (it always asks the user for a Y/N keystroke first).\n"
         "- read or save a local file -> `read_local_file` / `write_local_file` (writes always confirm with the user). Never read credentials (.env, *.key, *.pem).\n"
         "- notes, manuals, or a folder of documents -> `index_documents` once, then `search_documents` to answer from them.\n"
@@ -684,9 +881,71 @@ def _build_system_prompt() -> str:
     )
 
 
+def format_dictation_for_app(raw_text: str, app_context: dict) -> str:
+    """Uses Flash Tier (qwen2.5:3b) to reformat and polish dictated speech
+
+    specifically for the user's active application (e.g. IDE, Slack, Outlook, Terminal).
+    """
+    app_name = app_context.get("app_name", "Unknown Application")
+    category = app_context.get("category", "general")
+    title = app_context.get("title", "")
+
+    system_prompt = (
+        f"You are a VoiceOS Context-Aware Dictation Engine.\n"
+        f"The user is dictating speech into the active application:\n"
+        f"- Target Application: {app_name} (Category: {category})\n"
+        f"- Window Title: {title}\n\n"
+        "Your task: Convert the raw spoken transcript into cleanly formatted, ready-to-paste text tailored for this app.\n"
+        "Formatting Guidelines:\n"
+        "- Coding / IDEs: Output only code, comments, docstrings, or syntax as intended without chit-chat.\n"
+        "- Email (Outlook/Gmail): Professional tone, proper punctuation, capitalized sentences, and paragraph breaks.\n"
+        "- Chat / Messaging (Slack/Teams/Discord): Concise, conversational, natural capitalization, punchy formatting.\n"
+        "- Terminal / CLI: Exact shell command syntax without surrounding markdown or formatting.\n"
+        "- Documents (Word/Notion/Docs): Well-structured prose, bullet points if dictated, grammatically polished.\n"
+        "- General: Fix speech stutters/repetitions, correct grammar, preserve the user's core meaning.\n\n"
+        "CRITICAL: Output ONLY the final formatted text to insert. Do NOT add any preamble, explanation, quotes, or meta-comments."
+    )
+
+    try:
+        response = ollama.chat(
+            model=FLASH_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": raw_text},
+            ],
+            options={"temperature": 0.2, "num_gpu": -1},
+            keep_alive=FLASH_KEEP_ALIVE,
+        )
+        cleaned = (response.message.content or "").strip()
+        if category in ["coding", "terminal"] and "```" in cleaned:
+            import re
+
+            cleaned = re.sub(r"^```[a-zA-Z0-9_+.-]*\s*\n?", "", cleaned)
+            cleaned = re.sub(r"\n?```$", "", cleaned).strip()
+        return cleaned if cleaned else raw_text
+    except Exception as e:
+        print(f"[Dictation Formatting Fallback] {e}")
+        return raw_text
+
+
+tool_execution_callback = None
+
+
 def _dispatch_tool(name: str, args: dict) -> str:
-    """Routes a tool call from the model to the matching function in tools.py."""
+    """Routes a tool call from the model to tools.py and triggers any active callback."""
+    res = _dispatch_tool_internal(name, args)
+    if callable(tool_execution_callback):
+        try:
+            tool_execution_callback(name, args, res)
+        except Exception:
+            pass
+    return res
+
+
+def _dispatch_tool_internal(name: str, args: dict) -> str:
+    """Internal router for all tool functions in tools.py."""
     if name == "get_full_system_overview":
+
         return tools.get_full_system_overview()
     if name == "get_top_resource_hogs":
         return tools.get_top_resource_hogs(int(args.get("limit", 5)))
@@ -735,6 +994,32 @@ def _dispatch_tool(name: str, args: dict) -> str:
         return tools.capture_and_analyze_screen(
             str(args.get("prompt", "Describe what is on the screen."))
         )
+    if name == "get_active_window_info":
+        return tools.get_active_window_info()
+    if name == "dictate_into_active_window":
+        return tools.dictate_into_active_window(
+            str(args.get("text", "")),
+            mode=str(args.get("mode", "smart_format")),
+        )
+    if name == "get_selected_text":
+        return tools.get_selected_text()
+    if name == "edit_selected_text":
+        return tools.edit_selected_text(str(args.get("instruction", "")))
+    if name == "draft_email":
+        return tools.draft_email(
+            str(args.get("recipient", "")),
+            str(args.get("subject", "")),
+            str(args.get("body", "")),
+        )
+    if name == "schedule_calendar_event":
+        return tools.schedule_calendar_event(
+            str(args.get("title", "")),
+            str(args.get("start_time", "")),
+            duration_minutes=int(args.get("duration_minutes", 30)),
+            description=str(args.get("description", "")),
+        )
+    if name == "list_calendar_events":
+        return tools.list_calendar_events()
     if name == "list_project_files":
         return tools.list_project_files()
     if name == "read_project_file":
@@ -789,6 +1074,8 @@ def _dispatch_tool(name: str, args: dict) -> str:
         return tools.set_daily_briefing_time(str(args.get("time_str", "08:00")))
     if name == "trigger_daily_briefing":
         return tools.trigger_daily_briefing()
+    if name == "switch_model":
+        return tools.switch_model(str(args.get("model_name", "")))
     return f"Unknown tool: {name}"
 
 
@@ -837,11 +1124,11 @@ def query_jarvis(prompt: str, history: list) -> str:
         code_block_retried = False
         for _ in range(5):  # At most 5 tool-call rounds before forcing an answer
             response = ollama.chat(
-                model=FLASH_MODEL,
+                model=ACTIVE_MODEL,
                 messages=messages,
                 tools=available_tools,
-                options=FLASH_OPTIONS,
-                keep_alive=FLASH_KEEP_ALIVE,
+                options=ACTIVE_OPTIONS,
+                keep_alive=ACTIVE_KEEP_ALIVE,
             )
 
             tool_calls = getattr(response.message, "tool_calls", None) or []
@@ -877,10 +1164,10 @@ def query_jarvis(prompt: str, history: list) -> str:
 
         # Tool loop limit reached without a final answer - ask once more, plainly.
         response = ollama.chat(
-            model=FLASH_MODEL,
+            model=ACTIVE_MODEL,
             messages=messages,
-            options=FLASH_OPTIONS,
-            keep_alive=FLASH_KEEP_ALIVE,
+            options=ACTIVE_OPTIONS,
+            keep_alive=ACTIVE_KEEP_ALIVE,
         )
         return _strip_code_fences(response.message.content)
 

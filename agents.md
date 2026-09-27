@@ -1,124 +1,162 @@
-# TASK: JARVIS — Local 3-Tier Voice Agent Orchestrator
+# AGENTS.md — Multi-Agent Engineering & Operations Manual
 
-## 1. Project Goal
-Build a modular, zero-cost, local voice-controlled AI assistant ("JARVIS") in Python. The system runs continuous voice interaction, tool execution (OS control), and voice output locally on the specified hardware.
-
-## 2. Hardware Constraints & Hardware-Split Strategy
-- **GPU:** NVIDIA GTX 1660 (4GB VRAM). Reserved for Ollama — used by the **Flash Tier** (always-resident) and briefly by the **Vision Tier**.
-- **CPU & RAM:** AMD Ryzen 7 2700X + 32GB RAM. Used by STT, TTS, VAD, the wake-word gatekeeper, and the **Pro Tier** (`qwen3-coder:30b`).
-
-### Mandatory Rules (Never Break These)
-1. **Flash Tier (`llm.py`):** `ollama` with `qwen2.5:3b`. Force full GPU offload with `options={"num_gpu": -1}` and keep resident with `keep_alive=-1` so it stays locked inside the 4GB VRAM for the whole session.
-2. **Speech-to-Text (`stt.py`):** `faster-whisper` with model `"base.en"`. MUST force `device="cpu"` and `compute_type="int8"` to preserve GPU VRAM.
-3. **Text-to-Speech (`tts.py`):** `Piper` (fallback `pyttsx3`) running strictly on the CPU.
-4. **Pro Tier (`tools.py` → `ask_pro_coder`):** `qwen3-coder:30b`. MUST run on CPU only (`options={"num_gpu": 0}`) and unload after use (`keep_alive=0`) so it "goes back to sleep" and returns its RAM to the system.
-5. **Vision Tier (`tools.py` → `capture_and_analyze_screen`):** `gemma4:e4b`. MUST unload after use (`keep_alive=0`) so it never holds VRAM the Flash Tier needs.
-6. **Environment:** Use the existing `.venv` (at `jarvis_project/.venv`). Do not create new virtual environments.
+> **MANDATORY DIRECTIVE FOR ALL AI AGENTS & ASSISTANTS:**  
+> You MUST read this document in its entirety along with [plan.md](file:///m:/coding/Jarvis/plan.md) and [ARCHITECTURE.md](file:///m:/coding/Jarvis/ARCHITECTURE.md) before inspecting, editing, or executing any code in this repository.  
+> Every change must respect the hardware split, inter-module contracts, and multi-agent file ownership boundaries defined herein.
 
 ---
 
-## 3. The Final 3-Tier Architecture (Agent-as-a-Tool Router)
+## 1. Project Mission & Identity
 
-One lightweight always-on model acts as the brain and calls heavier specialized models only when necessary, through normal tool calls.
-
-### Tier 1 — The "Flash" Tier (The Orchestrator)
-- **Model:** `qwen2.5:3b`
-- **Hardware State:** Locked entirely inside the 4GB GPU VRAM (`num_gpu=-1`, `keep_alive=-1`).
-- **Use Cases:** Handles the real-time voice loop (STT → LLM → TTS) with zero latency. Casual conversation, triaging user requests, and orchestrating basic tools (web search, database memory, OS actions).
-
-### Tier 2 — The "Pro" Tier (The Heavy Developer)
-- **Model:** `qwen3-coder:30b` (via the `ask_pro_coder` tool).
-- **Hardware State:** Sleeps until called; loads into the 32GB system RAM, runs off the Ryzen CPU, returns raw code to the Flash Tier, then unloads (`keep_alive=0`).
-- **Use Cases:** Complex software development, multi-threaded Python scripts, deep architectural design, heavy logic debugging.
-
-### Tier 3 — The "Vision" Tier (The Screen Analyzer)
-- **Model:** `gemma4:e4b` (via the `capture_and_analyze_screen` tool; `describe_screen` uses Windows WinRT OCR as a lighter alternative).
-- **Hardware State:** Loads on demand, uses `mss` to capture the desktop in memory, answers, then unloads (`keep_alive=0`).
-- **Use Cases:** Reading error popups, inspecting UI elements, looking at code on screen without copy/paste.
-
-### The Sandbox Evaluator Loop — DEPRECATED / SCRAPPED
-The fully autonomous self-evolution loop (`sandbox_tools.py`, `self_evolve.py`, `demo_self_evolve.py`) was explored and then **scrapped to save hardware overhead**. Do NOT reintroduce it. The surviving safety mechanism is `apply_code_change()` in `tools.py`, which backs up, `py_compile`-validates, and rolls back JARVIS's own source edits.
+**JARVIS** is an entirely local, zero-cloud, modular voice and desktop AI assistant built on Windows 11. It operates with zero subscription costs, requires no external API keys, and runs continuous voice interaction, tool execution, operating system control, and background proactivity on local consumer hardware.
 
 ---
 
-## 4. Utility Sub-Agents (Background Toolsets)
+## 2. Hardware Constraints & The 3-Tier Split (Non-Negotiable)
 
-- **The Autonomous Cron-Agent ("The Pulse", `pulse.py`):** Runs a silent secondary thread monitoring model downloads, hardware/thermal spikes, daily 8:00 AM morning briefings, and scheduled reminders, triggering the Flash Tier to speak unprompted in character.
-- **The Live Data Agent (`jarvis_search`):** Playwright-based Google search. Overcomes local models' static training cutoffs by fetching real-time 2026 data before answering.
-- **The Persistent Memory Agent (`remember_fact` / `recall_facts` / `forget_fact`):** Stores personal context (e.g. car mileage, hardware specs) in SQLite (`jarvis_memory.db`), giving JARVIS long-term memory across reboots. Conversation history is also persisted there.
-- **The Wake Word Gatekeeper (`wakeword.py`):** openWakeWord (ONNX) offline trigger ("Hey Jarvis") with an ultra-low CPU footprint, so the mic loop never maxes out the Ryzen when idle. Also supports Push-to-Talk (hold CTRL) and Always-Listening (classic VAD) modes.
+The architecture is strictly engineered around hardware partitioning across GPU VRAM and CPU/RAM:
+
+| Compute Tier | Model | Hardware Allocation | Residency & Parameters | Primary Role |
+| :--- | :--- | :--- | :--- | :--- |
+| **Flash Tier** (The Brain) | `qwen2.5:3b` | **GPU VRAM** (GTX 1660 4GB) | `num_gpu=-1`, `keep_alive=-1`<br>*(Locked resident in VRAM)* | Real-time voice loop (<400ms), general conversation, tool orchestration. |
+| **Pro Tier** (Heavy Coder) | `qwen3-coder:30b` | **System RAM & CPU** (32GB RAM, Ryzen 2700X) | `num_gpu=0`, `keep_alive=0`<br>*(Unloads immediately after call)* | Complex software engineering, architectural logic, debugging via `ask_pro_coder`. |
+| **Vision Tier** (Screen Inspector)| `gemma4:e4b` | **GPU VRAM / RAM** | `keep_alive=0`<br>*(Unloads immediately after call)* | Multimodal screen analysis via `capture_and_analyze_screen`. |
+
+### Invariant Rules
+1. **Never evict the Flash Tier:** The Flash Tier must stay resident (`keep_alive=-1`) in GPU VRAM for the entire session. Never set `keep_alive=0` on `qwen2.5:3b`.
+2. **Never leave Pro or Vision tiers resident:** `ask_pro_coder` and `capture_and_analyze_screen` must enforce `keep_alive=0` so they release their memory immediately upon completion.
+3. **Audio stack runs on CPU:** `faster-whisper` (`base.en`) MUST run with `device="cpu"` and `compute_type="int8"`. Piper TTS and pyttsx3 MUST run on CPU. Never offload STT/TTS to GPU.
+4. **Environment Isolation:** Always execute using the project virtual environment at `jarvis_project/.venv`. Never create new virtual environments.
 
 ---
 
-## 5. File Structure
+## 3. Multi-Agent Team Structure & File Ownership
+
+To avoid merge collisions, race conditions, or broken contracts when multiple agents work simultaneously, the codebase is divided into clear functional domains with strict file ownership.
 
 ```
-jarvis_project/
- tools.py       # OS actions + Pro/Vision tier delegation + self-modification + Pulse tools
- stt.py         # Microphone capture & faster-whisper CPU transcription
- tts.py         # Local CPU TTS (Piper) with barge-in; pyttsx3 fallback
- vad.py         # Voice-activity detection (UtteranceRecorder + barge-in monitor)
- wakeword.py    # openWakeWord "Hey Jarvis" gatekeeper (ONNX, CPU)
- memory.py      # SQLite persistent memory (history + facts + reminders)
- pulse.py       # Autonomous background Cron-Agent + event triggers + unprompted Flash speech
- rag.py         # Local Document RAG "Second Brain" (SQLite + nomic-embed-text embeddings)
- llm.py         # Flash Tier Ollama interface, 26 tool definitions, tool loop
- main.py        # Core Orchestrator event loop (voice loop, pulse lifecycle, --text mode)
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           MULTI-AGENT DOMAIN ROLES                              │
+├─────────────────────┬───────────────────────────┬───────────────────────────────┤
+│ 🧠 ORCHESTRATION    │ ⚡ OS & CAPABILITIES       │ 🔊 AUDIO & VOICEOS            │
+│ Files: main.py,     │ Files: tools.py,          │ Files: stt.py, tts.py,        │
+│        llm.py       │        window_context.py  │        vad.py, wakeword.py    │
+├─────────────────────┼───────────────────────────┼───────────────────────────────┤
+│ 🖥️ HUD & FRONTEND   │ 💾 MEMORY & RAG           │ 🛡️ QA & BENCHMARKING          │
+│ Files: gui_server,  │ Files: memory.py,         │ Files: test_gui.py,           │
+│        gui/*,       │        rag.py,            │        test_voiceos.py,       │
+│        gui_launcher │        pulse.py           │        tier_smoke_test.py     │
+└─────────────────────┴───────────────────────────┴───────────────────────────────┘
+```
+
+### 3.1 Role Definitions & Ownership Matrix
+
+| Domain Role | Primary Files Owned | Permitted Modifications | Prohibited Actions |
+| :--- | :--- | :--- | :--- |
+| **🧠 Orchestration Agent** | `jarvis_project/main.py`<br>`jarvis_project/llm.py` | Event loop, system prompts, tool schema registration (`available_tools`), `_dispatch_tool()`, multi-round reasoning. | Modifying audio capture logic directly; altering tool implementations in `tools.py`. |
+| **⚡ OS & Tool Agent** | `jarvis_project/tools.py`<br>`jarvis_project/window_context.py` | Tool implementations, Win32 automation, OS telemetry, process inspection, external integrations. | Changing tool schemas in `llm.py` without updating `available_tools` in sync; bypassing `TurnCoordinator`. |
+| **🔊 Audio & VoiceOS Agent**| `jarvis_project/stt.py`<br>`jarvis_project/tts.py`<br>`jarvis_project/vad.py`<br>`jarvis_project/wakeword.py`| Audio capture, VAD thresholding, Whisper transcription, Piper speech synthesis, barge-in detection. | Importing `vad.py` outside of `stt.py` and `tts.py`; routing audio processing to GPU. |
+| **🖥️ HUD & Frontend Agent** | `jarvis_project/gui_server.py`<br>`jarvis_project/gui_launcher.py`<br>`jarvis_project/gui/*` | Cyberpunk HUD UI (`index.html`, `gui.css`, `gui.js`), HTTP REST endpoints, status streaming. | Breaking REST schema contracts; modifying LLM tool execution logic. |
+| **💾 Memory & Pulse Agent** | `jarvis_project/memory.py`<br>`jarvis_project/rag.py`<br>`jarvis_project/pulse.py` | SQLite schema, document indexing & embeddings, autonomous background triggers, unprompted speech events. | Running long blocking RAG searches on the main thread; bypassing `TurnCoordinator` during speech. |
+| **🛡️ QA & Testing Agent** | `test_*.py`<br>`tier_smoke_test.py` | Automated tests, regression testing, concurrency benchmarking, telemetry verification. | Modifying production source code under `jarvis_project/` without an assigned task ticket. |
+
+---
+
+## 4. Multi-Agent Coordination & Concurrency Rules
+
+### 4.1 The 5-Step Agent Workflow
+Every agent engaging with this repository MUST execute the following sequence:
+
+1. **Pre-Flight Orientation:**
+   - Read [plan.md](file:///m:/coding/Jarvis/plan.md) to check active sprint priorities and locks.
+   - Read [ARCHITECTURE.md](file:///m:/coding/Jarvis/ARCHITECTURE.md) to verify API/data contracts.
+2. **Claim Task & File Lock:**
+   - In [plan.md](file:///m:/coding/Jarvis/plan.md), locate the target task or register a new one.
+   - Set status to `[CLAIMED: <AgentName>]` and list the locked files.
+   - If an intended file is already claimed by another agent, DO NOT touch it. Work on a different task or coordinate.
+3. **Execution & Ponytail Principles:**
+   - Prefer standard libraries or established packages over reinventing the wheel (e.g. in-memory numpy in `faster_whisper`, `duckduckgo_search` over Playwright scraping, `pynvml` over `nvidia-smi` subprocesses).
+   - Keep diffs surgical and minimal. Boring over clever.
+4. **Mandatory Verification Gate:**
+   - Compile all modified files with `python -m py_compile <file>`.
+   - Run relevant unit tests:
+     - VoiceOS / Win32: `python test_voiceos.py`
+     - GUI Server: `python test_gui.py`
+     - 3-Tier Architecture & Residency: `python tier_smoke_test.py`
+5. **Post-Flight Logging:**
+   - Append a standardized change log entry to [plan.md](file:///m:/coding/Jarvis/plan.md).
+   - Release the file lock by marking the task `[DONE]`.
+
+### 4.2 Cross-Module Synchronization Invariants
+- **Tool Registration Symmetry:** Whenever a tool function is added or modified in `tools.py`, its schema MUST be updated in `llm.py:available_tools` and its handler dispatched in `llm.py:_dispatch_tool()`.
+- **Audio Barge-In & Speech Locking:** Any background voice generation (such as Pulse unprompted alerts) MUST acquire `pulse.coordinator.acquire_pulse_turn()` before speaking to prevent colliding with active user speech.
+- **Database Thread Safety:** Both `jarvis_memory.db` and `jarvis_rag.db` are accessed concurrently across HTTP threads, the main loop, and background Pulse threads. All connections MUST enable WAL mode and set busy timeouts:
+  ```python
+  conn.execute("PRAGMA journal_mode=WAL;")
+  conn.execute("PRAGMA busy_timeout=5000;")
+  ```
+- **No Headless Blocking:** Never call `input()` inside functions that can be invoked via GUI or headless mode (`execute_admin_fix`, `confirm_and_run_command`, etc.).
+
+---
+
+## 5. Directory Structure & Map
+
+```
+m:\coding\Jarvis\
+├── AGENTS.md                  # Master Agent Specification & Operating Manual (this file)
+├── plan.md                    # Synchronized Multi-Agent Task Board & Change Log
+├── ARCHITECTURE.md            # System Contracts, API Schemas & Data Flow
+├── MULTI_AGENT_PROTOCOL.md    # Swarm Execution Rules, Git Worktrees & Locks
+├── CODEBASE_EXPLAINED.md      # Detailed line-by-line code explanation
+├── WORKFLOW_AND_SYSTEM_AUDIT.md # Technical audit & vulnerability matrix
+├── run_jarvis.ps1             # PowerShell launcher (-Text, -Gui, or default Voice)
+├── JARVIS.exe / launcher.cs   # Silent C# desktop bootstrap executable
+├── tier_smoke_test.py         # Hardware residency & 3-tier contract test
+├── test_voiceos.py            # Win32 context inspection & dictation test
+├── test_gui.py                # HUD HTTP API and telemetry test
+│
+└── jarvis_project/            # Core Python package (runs inside .venv)
+    ├── main.py                # Master Orchestrator & CLI entry point
+    ├── llm.py                 # Flash Tier cognitive router (35+ tools schema)
+    ├── tools.py               # OS actions, Pro/Vision delegation, VoiceOS tools
+    ├── window_context.py      # Win32 foreground window & process classification
+    ├── stt.py                 # Faster-Whisper CPU int8 transcription
+    ├── tts.py                 # Piper neural TTS with barge-in support
+    ├── vad.py                 # Voice activity detection & speech windowing
+    ├── wakeword.py            # openWakeWord ONNX "Hey Jarvis" detector
+    ├── memory.py              # SQLite conversation history, facts & reminders
+    ├── pulse.py               # Autonomous background Cron-Agent & unprompted speech
+    ├── rag.py                 # Local Document RAG (SQLite + nomic-embed-text)
+    ├── vault.py               # Environment variable & token loader (.env)
+    ├── gui_launcher.py        # Desktop App window lifecycle manager
+    ├── gui_server.py          # Multithreaded HUD HTTP REST API server
+    └── gui/                   # Desktop Cyberpunk HUD Frontend
+        ├── index.html         # HUD layout, canvas Arc Reactor visualizer
+        ├── gui.css            # Futuristic glassmorphism styling
+        └── gui.js             # Real-time telemetry poller, chat & audio bus
 ```
 
 ---
 
-## 6. Detailed Component Specifications
+## 6. Verification & Quality Gates
 
-### File 1: `tools.py`
-Real-world actions with docstrings and type annotations so Ollama can parse them:
-- `open_app(app_name)` — launches a Windows app or opens a website (PATH + Registry + standard-dir resolution; no shell, injection-safe).
-- `get_system_stats()` — CPU, RAM, and NVIDIA GPU usage via `psutil` + `nvidia-smi`.
-- `run_cmd(command)` — read-only PowerShell command with denylist + safelist.
-- `jarvis_search(query)` — Google search via Playwright.
-- `check_disk_space(drive)` — total/used/free for a drive.
-- `install_app(app_name, force=False)` — winget install after a storage-space check.
-- `describe_screen()` — screenshot + Windows WinRT OCR + active window title.
-- `capture_and_analyze_screen(prompt)` — `mss` capture + Vision Tier (`gemma4:e4b`, `keep_alive=0`).
-- `ask_pro_coder(prompt)` — delegates to Pro Tier (`qwen3-coder:30b`, CPU-only, `keep_alive=0`).
-- Self-inspection/self-modification: `list_project_files`, `read_project_file`, `apply_code_change`, `restore_backup`.
-- Memory delegators: `remember_fact`, `recall_facts`, `forget_fact` (→ `memory.py`).
-- Local File Executor: `read_local_file(path)` (refuses credentials/binary, 200KB cap) and `write_local_file(path, content)` (Y/N keystroke confirm, blocks protected dirs).
-- Safe Command Execution: `confirm_and_run_command(command)` — PowerShell, always waits for a manual Y/N keystroke, 60s timeout.
-- RAG delegators: `index_documents(folder_path)`, `search_documents(query, top_k=5)` (→ `rag.py`).
+Before declaring any task complete or committing changes, run the appropriate gate commands:
 
-### File 2: `stt.py`
-`listen_and_transcribe()` records a full utterance (VAD, pause-detected) and transcribes with `WhisperModel("base.en", device="cpu", compute_type="int8")`. Lazy-cached model, gain normalization, optional `noisereduce`. `listen_and_transcribe_ptt(key)` for push-to-talk.
+```powershell
+# 1. Syntax & Bytecode Compilation Check
+& ".\jarvis_project\.venv\Scripts\python.exe" -m py_compile jarvis_project/*.py
 
-### File 3: `tts.py`
-`speak(text)` synthesizes with Piper (`en_GB-alan-medium`) or pyttsx3 and plays via sounddevice. Supports barge-in: if the user starts speaking, playback aborts instantly and `True` is returned so the caller re-listens.
+# 2. GUI Server API & Static Asset Delivery Test
+& ".\jarvis_project\.venv\Scripts\python.exe" test_gui.py
 
-### File 4: `vad.py`
-Shared audio primitives: `UtteranceRecorder` (start-to-end utterance capture for STT) and `SpeechInterruptMonitor` (barge-in detection for TTS). Only imported by `stt.py` and `tts.py`.
+# 3. VoiceOS Active Window & Keystroke Synthesis Test
+& ".\jarvis_project\.venv\Scripts\python.exe" test_voiceos.py
 
-### File 5: `wakeword.py`
-`WakeWordDetector` — openWakeWord ONNX model for "Hey Jarvis" (16kHz, mono, int16, 1280-sample chunks). Modes: wake-word only, combined with PTT, or classic always-listening.
+# 4. 3-Tier Hardware Split & Model Sleep/Wake Test
+& ".\jarvis_project\.venv\Scripts\python.exe" tier_smoke_test.py
 
-### File 6: `memory.py`
-SQLite (`jarvis_memory.db`): `history` table (last 20 turns for context) + `facts` table (long-term facts). Parameterized queries, defensive `init_db()` on import and per call.
+# 5. CLI Text Mode Smoke Test (Zero Audio Dependencies)
+& ".\jarvis_project\.venv\Scripts\python.exe" jarvis_project/main.py --text
+```
 
-### File 7: `llm.py`
-`query_jarvis(prompt, history)`:
-- Calls `ollama.chat(model=qwen2.5:3b, ..., options={"num_gpu": -1}, keep_alive=-1)` with the 22 available tools.
-- Runs a multi-step tool loop (max 5 rounds): if Ollama returns `tool_calls`, executes the corresponding function in `tools.py` via `_dispatch_tool`, feeds the output back, and continues until a plain-text answer.
-- Returns the final conversational text.
-
-### File 8: `main.py`
-Entry point:
-- `--text` flag runs a text-only session (no audio imports).
-- Interactive input-mode picker: wake word / PTT / combined / always-listening.
-- Background `_monitor_system()` daemon thread (disk < 5GB, CPU > 90%, RAM > 90% alerts).
-- `while True` loop: trigger → STT → memory → `llm.query_jarvis` → TTS (barge-in aware) → re-listen on interrupt.
-- Graceful exit on "quit" / "exit" / "stop" / "goodbye"; memory wipe on "forget".
-
----
-
-## 7. Setup Notes
-
-- Pull the tier models with `ollama pull`: `qwen2.5:3b` (installed), `qwen3-coder:30b` (~19GB), `gemma4:e4b`.
-- Run: `python main.py` from `jarvis_project/` using `.venv`. For text-only testing: `python main.py --text`.
+Agents must uphold these standards to keep JARVIS lean, reliable, and production-ready.

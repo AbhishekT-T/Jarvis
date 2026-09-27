@@ -4,7 +4,8 @@
 #>
 
 param (
-    [switch]$Text
+    [switch]$Text,
+    [switch]$Gui
 )
 
 $RootPath = (Get-Item -Path $PSScriptRoot).FullName
@@ -18,7 +19,12 @@ if (-not (Test-Path $VenvPython)) {
 
 Set-Location $JarvisDir
 
-if ($Text) {
+if ($Gui) {
+    Write-Host "==========================================================" -ForegroundColor Magenta
+    Write-Host "             Starting JARVIS Cyberpunk HUD                " -ForegroundColor Magenta
+    Write-Host "==========================================================" -ForegroundColor Magenta
+    & $VenvPython main.py --gui
+} elseif ($Text) {
     Write-Host "==========================================================" -ForegroundColor Cyan
     Write-Host "             Starting JARVIS in Text Mode                 " -ForegroundColor Cyan
     Write-Host "==========================================================" -ForegroundColor Cyan
@@ -30,3 +36,4 @@ if ($Text) {
     Write-Host "Say 'Hey Jarvis' to wake him up!" -ForegroundColor Yellow
     & $VenvPython main.py
 }
+

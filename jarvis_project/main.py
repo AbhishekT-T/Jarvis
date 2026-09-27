@@ -6,12 +6,14 @@ import memory
 import pulse
 
 TEXT_MODE = "--text" in sys.argv
+GUI_MODE = "--gui" in sys.argv
 
-if not TEXT_MODE:
+if not TEXT_MODE and not GUI_MODE:
     # pyrefly: ignore [missing-import]
     import sounddevice as sd
     import stt
     import tts
+
 
 EXIT_COMMANDS = {"quit", "exit", "stop", "goodbye"}
 FORGET_COMMANDS = {
@@ -23,6 +25,12 @@ FORGET_COMMANDS = {
     "erase your memory",
     "delete your memory",
 }
+
+# ── VoiceOS Configuration ─────────────────────────────────────────────────────
+# The global hotkey for system-wide push-to-talk in VoiceOS mode.
+# Must be a non-modifier key that doesn't conflict with common shortcuts.
+# Good choices: "f8", "scroll lock", "pause", "f9"
+VOICEOS_KEY = "f8"
 
 
 def _print_audio_info() -> None:
@@ -54,8 +62,14 @@ def _normalize(text: str) -> str:
 
 
 def main() -> None:
+    if GUI_MODE:
+        import gui_launcher
+        gui_launcher.launch_gui()
+        return
+
     # Restore memory from previous sessions so JARVIS "remembers" you.
     history = memory.load_history()
+
 
     _print_audio_info()
 
@@ -81,9 +95,10 @@ def main() -> None:
         print("  [2] Push-to-Talk Only (Hold CTRL)")
         print("  [3] Combined: Wake Word OR Push-to-Talk (Default)")
         print("  [4] Always Listening (Classic VAD)")
+        print(f"  [5] VoiceOS (Hold [{VOICEOS_KEY.upper()}] from any app)")
         print("=======================================================")
-        mode_choice = input("Enter option (1/2/3/4) [3]: ").strip()
-        if mode_choice not in {"1", "2", "3", "4"}:
+        mode_choice = input("Enter option (1/2/3/4/5) [3]: ").strip()
+        if mode_choice not in {"1", "2", "3", "4", "5"}:
             mode_choice = "3"
 
     detector = None
@@ -102,6 +117,8 @@ def main() -> None:
 
     if TEXT_MODE:
         print("Listening: Text mode active. Type your message...")
+    elif mode_choice == "5":
+        print(f"VoiceOS active: Hold [{VOICEOS_KEY.upper()}] from any window to speak...")
     elif mode_choice == "3":
         print("Listening: Say 'Hey Jarvis' OR Hold [CTRL] key down to speak...")
     elif mode_choice == "1":
@@ -130,6 +147,10 @@ def main() -> None:
                     user_text = stt.listen_and_transcribe_ptt(key="ctrl")
                 else:
                     user_text = stt.listen_and_transcribe()
+            elif mode_choice == "5":
+                # VoiceOS mode: global F8 push-to-talk from any window
+                pulse.coordinator.start_user_interaction()
+                user_text = stt.listen_and_transcribe_ptt(key=VOICEOS_KEY)
             else:
                 pulse.coordinator.start_user_interaction()
                 user_text = stt.listen_and_transcribe()
@@ -202,3 +223,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

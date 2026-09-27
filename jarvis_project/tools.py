@@ -1,24 +1,31 @@
 import base64
+import ctypes
 import datetime
 import json
 import os
 import re
 import shutil
 import subprocess
+import time
 import urllib.parse
 import webbrowser
 import winreg
 from urllib.request import Request, urlopen
 
 import memory
+
 import mss
 import mss.tools
 import ollama
 import psutil
 import rag
+import win32clipboard
+import win32con
 import win32gui
+import window_context
 from PIL import ImageGrab
 from playwright.sync_api import sync_playwright
+
 
 # ── Model Tier Configuration ──────────────────────────────────────────────────
 # Flash Tier  : qwen2.5:3b       — always-on conversation brain (4 GB GPU VRAM)
@@ -94,20 +101,27 @@ def find_app_path(executable_name: str) -> str | None:
 
 
 def get_running_browser_exe() -> str | None:
-    """Scans running processes to find if a known browser is active, and returns its executable path."""
+    """Scans running processes to find if a known browser is active, and returns its executable path.
+    Excludes instances running in standalone app-mode (such as the JARVIS HUD).
+    """
     known_browsers = ["brave.exe", "chrome.exe", "msedge.exe", "firefox.exe"]
-    for proc in psutil.process_iter(["name", "exe"]):
+    for proc in psutil.process_iter(["name", "exe", "cmdline"]):
         try:
-            name = proc.info["name"]
+            name = proc.info.get("name")
             if name:
                 name_lower = name.lower()
                 if name_lower in known_browsers:
-                    exe_path = proc.info["exe"]
+                    # Ignore app-mode instances (e.g. HUD window)
+                    cmdline = proc.info.get("cmdline") or []
+                    if any("--app=" in str(arg) for arg in cmdline):
+                        continue
+                    exe_path = proc.info.get("exe")
                     if exe_path and os.path.exists(exe_path):
                         return exe_path
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
     return None
+
 
 
 def open_app(app_name: str) -> str:
@@ -137,25 +151,8 @@ def open_app(app_name: str) -> str:
         or app_name_lower in web_map
     ):
         url = web_map.get(app_name_lower, app_name_lower)
-        if not url.startswith(("http://", "https://")):
-            url = "https://" + url
-        # Only allow well-formed http/https URLs with no whitespace or quotes
-        if not re.match(r"^https?://[^\s\"']+$", url, re.IGNORECASE):
-            return f"Failed to open website. Invalid URL: {url}"
-        try:
-            # Check if any browser is already running
-            running_browser_exe = get_running_browser_exe()
-            if running_browser_exe:
-                # Open URL specifically in the running browser.
-                # Args as a list (no shell) prevents command injection via the URL.
-                subprocess.Popen([running_browser_exe, url])
-                return f"Successfully opened website {url} in running browser: {os.path.basename(running_browser_exe)}"
-            else:
-                # Fallback to the system default browser (no shell involved)
-                webbrowser.open(url)
-                return f"Successfully opened website: {url}"
-        except Exception as e:
-            return f"Failed to open website {url}. Error: {e!s}"
+        return open_url(url)
+
 
     # Map friendly app names to actual executables
     app_map = {
@@ -229,15 +226,17 @@ def open_url(url: str) -> str:
     if not re.match(r"^https?://[^\s\"']+$", url_clean, re.IGNORECASE):
         return f"Failed to open website. Invalid URL: {url_clean}"
     try:
-        running_browser_exe = get_running_browser_exe()
-        if running_browser_exe:
-            subprocess.Popen([running_browser_exe, url_clean])
-            return f"Successfully opened {url_clean} in browser: {os.path.basename(running_browser_exe)}"
-        else:
-            webbrowser.open(url_clean)
-            return f"Successfully opened {url_clean} in default browser."
-    except Exception as e:
-        return f"Failed to open URL {url_clean}. Error: {e!s}"
+        # Use Windows ShellExecute directly to ensure the user's default browser (e.g. Chrome)
+        # opens a real foreground window/tab, rather than sending it to an Edge background daemon.
+        os.startfile(url_clean)
+        return f"Successfully opened {url_clean} in your default browser."
+    except Exception:
+        try:
+            webbrowser.open(url_clean, new=2)
+            return f"Successfully opened {url_clean} in your default browser."
+        except Exception as e:
+            return f"Failed to open URL {url_clean}. Error: {e!s}"
+
 
 
 def play_youtube(query: str) -> str:
@@ -877,6 +876,14 @@ def ask_pro_coder(prompt: str) -> str:
         str: Expert-level code or architectural advice from the Pro Coder subsystem.
     """
     print(f"\n[ROUTER] Waking up {PRO_CODER_MODEL} (System RAM)...")
+    # Immediate verbal feedback to mask the 3-8s cold-swap latency of the 30B model
+    try:
+        import tts
+
+        tts.speak("Analyzing the codebase with the pro coder subsystem now, sir.")
+    except Exception:
+        pass
+
     try:
         response = ollama.chat(
             model=PRO_CODER_MODEL,
@@ -1603,3 +1610,378 @@ def execute_admin_fix(command: str) -> str:
         except Exception as e:
             return f"Execution failed: {e!s}"
     return "Cancelled by user."
+
+
+def get_active_window_info() -> str:
+    """Returns details about the user's currently focused foreground application."""
+    ctx = window_context.get_active_window_context()
+    return (
+        f"Active App: {ctx['app_name']}\n"
+        f"Category: {ctx['category']}\n"
+        f"Window Title: {ctx['title']}\n"
+        f"Process: {ctx['process_name']}"
+    )
+
+
+def type_into_active_window(text: str) -> bool:
+    """Inserts text into the active window via clipboard paste (Ctrl+V)
+
+    while preserving and restoring the user's previous clipboard contents.
+    """
+    if not text:
+        return False
+
+    orig_clipboard = None
+    try:
+        win32clipboard.OpenClipboard()
+        if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
+            orig_clipboard = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
+        win32clipboard.CloseClipboard()
+    except Exception:
+        try:
+            win32clipboard.CloseClipboard()
+        except Exception:
+            pass
+
+    # Copy new text to clipboard
+    try:
+        win32clipboard.OpenClipboard()
+        win32clipboard.EmptyClipboard()
+        win32clipboard.SetClipboardText(text, win32con.CF_UNICODETEXT)
+        win32clipboard.CloseClipboard()
+    except Exception as e:
+        print(f"[Clipboard Error] {e}")
+        try:
+            win32clipboard.CloseClipboard()
+        except Exception:
+            pass
+        return False
+
+    # Simulate Ctrl+V key combination
+    VK_CONTROL = 0x11
+    VK_V = 0x56
+    KEYEVENTF_KEYUP = 0x0002
+
+    try:
+        user32 = ctypes.windll.user32
+        # Press Ctrl
+        user32.keybd_event(VK_CONTROL, 0, 0, 0)
+        time.sleep(0.02)
+        # Press V
+        user32.keybd_event(VK_V, 0, 0, 0)
+        time.sleep(0.02)
+        # Release V
+        user32.keybd_event(VK_V, 0, KEYEVENTF_KEYUP, 0)
+        time.sleep(0.02)
+        # Release Ctrl
+        user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+    except Exception as e:
+        print(f"[Keystroke Injection Error] {e}")
+
+    # Allow target window time to consume the paste event, then restore original clipboard
+    time.sleep(0.15)
+    if orig_clipboard is not None:
+        try:
+            win32clipboard.OpenClipboard()
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardText(orig_clipboard, win32con.CF_UNICODETEXT)
+            win32clipboard.CloseClipboard()
+        except Exception:
+            try:
+                win32clipboard.CloseClipboard()
+            except Exception:
+                pass
+
+    return True
+
+
+def dictate_into_active_window(text: str, mode: str = "smart_format") -> str:
+    """VoiceOS Context-Aware Dictation tool.
+
+    Detects the active window, formats the dictated text appropriately for the target
+    application (e.g. Outlook vs. Slack vs. VS Code), and types/pastes it directly
+    into the active cursor field.
+    """
+    ctx = window_context.get_active_window_context()
+    app_name = ctx.get("app_name", "Active Window")
+    category = ctx.get("category", "general")
+
+    if mode == "smart_format":
+        import llm
+
+        formatted_text = llm.format_dictation_for_app(text, ctx)
+    else:
+        formatted_text = text
+
+    success = type_into_active_window(formatted_text)
+    if success:
+        return (
+            f"Successfully dictated and formatted text into {app_name} [{category}]:\n"
+            f"'{formatted_text}'"
+        )
+    return f"Failed to insert text into {app_name}."
+
+
+def get_selected_text() -> str:
+    """Captures the user's currently highlighted/selected text from any window.
+
+    Uses Ctrl+C to copy the selection to the clipboard, reads it, and restores
+    the original clipboard contents. Returns empty string if nothing is selected.
+    """
+    # Safety check: Ctrl+C in a terminal sends SIGINT, not copy
+    ctx = window_context.get_active_window_context()
+    if ctx.get("category") == "terminal":
+        return (
+            "[WARNING] The active window is a terminal. Sending Ctrl+C would "
+            "terminate the running process instead of copying text. Please "
+            "select the text manually and copy it first, or switch to a "
+            "non-terminal window."
+        )
+
+    # Preserve original clipboard
+    orig_clipboard = None
+    try:
+        win32clipboard.OpenClipboard()
+        if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
+            orig_clipboard = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
+        # Clear clipboard so we can detect if Ctrl+C actually copied anything
+        win32clipboard.EmptyClipboard()
+        win32clipboard.CloseClipboard()
+    except Exception:
+        try:
+            win32clipboard.CloseClipboard()
+        except Exception:
+            pass
+
+    # Simulate Ctrl+C to copy selection
+    VK_CONTROL = 0x11
+    VK_C = 0x43
+    KEYEVENTF_KEYUP = 0x0002
+
+    try:
+        user32 = ctypes.windll.user32
+        user32.keybd_event(VK_CONTROL, 0, 0, 0)
+        time.sleep(0.02)
+        user32.keybd_event(VK_C, 0, 0, 0)
+        time.sleep(0.02)
+        user32.keybd_event(VK_C, 0, KEYEVENTF_KEYUP, 0)
+        time.sleep(0.02)
+        user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+    except Exception as e:
+        print(f"[Keystroke Error] Could not send Ctrl+C: {e}")
+
+    # Wait for clipboard to populate
+    time.sleep(0.15)
+
+    # Read the copied text
+    selected_text = ""
+    try:
+        win32clipboard.OpenClipboard()
+        if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
+            selected_text = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
+        win32clipboard.CloseClipboard()
+    except Exception:
+        try:
+            win32clipboard.CloseClipboard()
+        except Exception:
+            pass
+
+    # Restore original clipboard
+    if orig_clipboard is not None:
+        try:
+            win32clipboard.OpenClipboard()
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardText(orig_clipboard, win32con.CF_UNICODETEXT)
+            win32clipboard.CloseClipboard()
+        except Exception:
+            try:
+                win32clipboard.CloseClipboard()
+            except Exception:
+                pass
+
+    return selected_text.strip() if selected_text else ""
+
+
+def edit_selected_text(instruction: str) -> str:
+    """VoiceOS Edit & Ask Mode.
+
+    Captures the user's highlighted text, sends it to the Flash Tier with a
+    transformation instruction (e.g. 'fix the grammar', 'translate to Spanish',
+    'make it more concise'), and replaces the selection in-place.
+    """
+    selected = get_selected_text()
+
+    if not selected:
+        return (
+            "No text appears to be selected. Please highlight some text in "
+            "the active window first, then ask me to edit it."
+        )
+
+    # If get_selected_text returned a warning (terminal safety), relay it
+    if selected.startswith("[WARNING]"):
+        return selected
+
+    ctx = window_context.get_active_window_context()
+    app_name = ctx.get("app_name", "Active Window")
+    category = ctx.get("category", "general")
+
+    # Use the Flash Tier to transform the text
+    import ollama
+
+    edit_prompt = (
+        f"The user has selected the following text in {app_name} ({category}) "
+        f"and wants you to: {instruction}\n\n"
+        f"--- SELECTED TEXT ---\n{selected}\n--- END SELECTED TEXT ---\n\n"
+        f"Output ONLY the replacement text. No preamble, no explanation, "
+        f"no markdown formatting, no code fences. Just the edited text."
+    )
+
+    try:
+        resp = ollama.chat(
+            model="qwen2.5:3b",
+            messages=[{"role": "user", "content": edit_prompt}],
+            options={"num_gpu": -1},
+            keep_alive=-1,
+        )
+        edited = resp["message"]["content"].strip()
+    except Exception as e:
+        return f"Failed to process the text edit: {e}"
+
+    if not edited:
+        return "The model returned empty text. No changes were made."
+
+    # Replace the selection by pasting the edited text (selection is still active)
+    success = type_into_active_window(edited)
+    if success:
+        return (
+            f"Edited text in {app_name}: '{instruction}'\n"
+            f"Original ({len(selected)} chars) → Edited ({len(edited)} chars)"
+        )
+    return f"Text was edited but could not be pasted into {app_name}."
+
+
+# ── VoiceOS Agent Mode: Email & Calendar ──────────────────────────────────────
+
+
+def draft_email(recipient: str, subject: str, body: str) -> str:
+    """VoiceOS Agent Mode: Prepares and opens an email draft for the user.
+
+    Requires physical [Y/N] confirmation before launching email composer.
+    """
+    import urllib.parse
+    import webbrowser
+
+    print("\n" + "=" * 55)
+    print("[AGENT ACTION PROPOSED: DRAFT EMAIL]")
+    print(f"To:      {recipient}")
+    print(f"Subject: {subject}")
+    print("-" * 55)
+    print(body[:300] + ("..." if len(body) > 300 else ""))
+    print("=" * 55)
+
+    confirm = input("Open email composer with this draft? (y/n): ").strip().lower()
+    if confirm != "y":
+        return "Email draft cancelled by user."
+
+    # Also put body into clipboard for convenience
+    try:
+        win32clipboard.OpenClipboard()
+        win32clipboard.EmptyClipboard()
+        win32clipboard.SetClipboardText(body, win32con.CF_UNICODETEXT)
+        win32clipboard.CloseClipboard()
+    except Exception:
+        pass
+
+    # Open system default mail client via mailto URI
+    mailto_url = f"mailto:{urllib.parse.quote(recipient)}?subject={urllib.parse.quote(subject)}&body={urllib.parse.quote(body)}"
+    try:
+        webbrowser.open(mailto_url)
+        return (
+            f"Email composer opened with draft to '{recipient}'. "
+            f"Subject: '{subject}'. (Body also copied to clipboard)."
+        )
+    except Exception as e:
+        return f"Could not launch mail client: {e}. Draft body copied to clipboard."
+
+
+def schedule_calendar_event(
+    title: str, start_time: str, duration_minutes: int = 30, description: str = ""
+) -> str:
+    """VoiceOS Agent Mode: Schedules a calendar event and sets a background reminder.
+
+    Generates a standard .ics file and registers it in JARVIS memory.
+    Requires physical [Y/N] confirmation.
+    """
+    import os
+    import tempfile
+    import webbrowser
+
+    print("\n" + "=" * 55)
+    print("[AGENT ACTION PROPOSED: SCHEDULE EVENT]")
+    print(f"Event:    {title}")
+    print(f"Time:     {start_time}")
+    print(f"Duration: {duration_minutes} minutes")
+    if description:
+        print(f"Details:  {description}")
+    print("=" * 55)
+
+    confirm = input("Confirm adding this event to calendar? (y/n): ").strip().lower()
+    if confirm != "y":
+        return "Calendar event cancelled by user."
+
+    # Add to persistent reminders
+    reminder_text = f"Calendar Event: {title} ({description or 'Scheduled'})"
+    memory.add_reminder(reminder_text, start_time)
+
+    # Generate standard .ics calendar file
+    ics_content = (
+        "BEGIN:VCALENDAR\n"
+        "VERSION:2.0\n"
+        "PRODID:-//JARVIS VoiceOS//EN\n"
+        "BEGIN:VEVENT\n"
+        f"SUMMARY:{title}\n"
+        f"DESCRIPTION:{description}\n"
+        f"STATUS:CONFIRMED\n"
+        "END:VEVENT\n"
+        "END:VCALENDAR\n"
+    )
+
+    try:
+        temp_dir = tempfile.gettempdir()
+        ics_path = os.path.join(temp_dir, f"jarvis_event_{int(time.time())}.ics")
+        with open(ics_path, "w", encoding="utf-8") as f:
+            f.write(ics_content)
+
+        # Launch default calendar app with .ics file
+        os.startfile(ics_path)
+        return (
+            f"Event '{title}' scheduled for {start_time} and opened in your calendar app. "
+            f"Also tracked in JARVIS background reminders."
+        )
+    except Exception as e:
+        return (
+            f"Event '{title}' registered in JARVIS reminders, but could not launch external calendar: {e}"
+        )
+
+
+def list_calendar_events() -> str:
+    """VoiceOS Agent Mode: Lists all upcoming scheduled events and reminders."""
+    reminders = memory.get_pending_reminders()
+    if not reminders:
+        return "No upcoming calendar events or reminders found."
+
+    lines = ["Upcoming Calendar Events & Reminders:"]
+    for r in reminders:
+        lines.append(f"  - [{r['id']}] {r['due_timestamp']}: {r['text']}")
+    return "\n".join(lines)
+
+
+def switch_model(model_name: str) -> str:
+    """Manually switches the active primary conversation model."""
+    import llm
+
+    res = llm.set_active_model(model_name)
+    return f"Active primary conversation model successfully switched to '{res['model']}'."
+
+
+

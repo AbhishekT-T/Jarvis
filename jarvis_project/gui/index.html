@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JARVIS // PROTOCOL HUD</title>
+  <link rel="stylesheet" href="gui.css">
+</head>
+<body>
+
+  <!-- Top Telemetry Header -->
+  <header class="header-bar">
+    <div class="logo-section">
+      <span class="hud-pill-tag">MARK-VII</span>
+      <h1 class="logo-text">J.A.R.V.I.S.</h1>
+    </div>
+
+    <div class="telemetry-pills">
+      <div class="tele-pill model-selector-pill" id="modelPill" title="Click to manually switch active AI model">
+        <span class="pill-label">MODEL:</span>
+        <select id="modelSelect" onchange="onModelSelectChange(this.value)" class="model-dropdown">
+          <option value="qwen2.5:3b">qwen2.5:3b (Flash)</option>
+          <option value="qwen3-coder:30b">qwen3-coder:30b (Pro)</option>
+          <option value="gemma4:e4b">gemma4:e4b (Vision)</option>
+          <option value="gemma4:26b">gemma4:26b (Large Vision)</option>
+        </select>
+      </div>
+      <div class="tele-pill" id="cpuPill" title="System CPU Utilization">
+        <span>CPU:</span>
+        <span class="val" id="cpuVal">--%</span>
+      </div>
+      <div class="tele-pill" id="ramPill" title="System RAM Usage">
+        <span>RAM:</span>
+        <span class="val" id="ramVal">--%</span>
+      </div>
+      <div class="tele-pill" id="gpuPill" title="GPU VRAM Usage">
+        <span>VRAM:</span>
+        <span class="val" id="gpuVal">--/4GB</span>
+      </div>
+      <div class="tele-pill app-context" id="appContextPill" title="VoiceOS Active Foreground Window">
+        <span>FOCUS:</span>
+        <span class="val" id="appContextVal">Desktop</span>
+      </div>
+    </div>
+
+    <div class="status-indicator">
+      <div class="status-dot idle" id="statusDot"></div>
+      <span id="statusText">ONLINE</span>
+    </div>
+  </header>
+
+  <!-- Main HUD Layout -->
+  <main class="main-content">
+    
+    <!-- Left Hologram & Telemetry Panel -->
+    <section class="hologram-panel">
+      <div class="visualizer-container">
+        <canvas id="arcCanvas" width="240" height="240"></canvas>
+        <div class="state-label" id="arcStateLabel">IDLE</div>
+      </div>
+
+      <div class="tier-badges" id="tierBadges">
+        <div class="tier-card active" id="card-qwen2-5-3b" onclick="switchModel('qwen2.5:3b')" title="Click to activate Flash Tier (qwen2.5:3b)">
+          <div class="tier-meta">
+            <span class="tier-title">FLASH TIER</span>
+            <span class="tag">qwen2.5:3b</span>
+          </div>
+          <span class="status-chip active-chip" id="chip-qwen2-5-3b">ACTIVE</span>
+        </div>
+        <div class="tier-card" id="card-qwen3-coder-30b" onclick="switchModel('qwen3-coder:30b')" title="Click to activate Pro Coder Tier (qwen3-coder:30b)">
+          <div class="tier-meta">
+            <span class="tier-title">PRO CODER</span>
+            <span class="tag">qwen3-coder:30b</span>
+          </div>
+          <span class="status-chip" id="chip-qwen3-coder-30b">SWITCH</span>
+        </div>
+        <div class="tier-card" id="card-gemma4-e4b" onclick="switchModel('gemma4:e4b')" title="Click to activate Vision Tier (gemma4:e4b)">
+          <div class="tier-meta">
+            <span class="tier-title">VISION TIER</span>
+            <span class="tag">gemma4:e4b</span>
+          </div>
+          <span class="status-chip" id="chip-gemma4-e4b">SWITCH</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Chat & Tool Feed -->
+    <section class="chat-panel">
+      <div class="chat-history" id="chatHistory">
+        <div class="message-card assistant">
+          <div class="msg-header">JARVIS // SYSTEM CORE</div>
+          <div class="msg-bubble">
+            All systems online. VoiceOS, local RAG knowledge base, and autonomous hardware monitoring active. Speak "Hey Jarvis" or type your command below.
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Bottom Control Deck -->
+  <footer class="bottom-control-deck">
+    <div class="quick-actions-bar">
+      <button class="quick-btn model-btn" onclick="cycleNextModel()" title="Cycle through installed AI models">🤖 Switch Model</button>
+      <button class="quick-btn" onclick="sendQuickAction('diagnostics')">⚡ System Diagnostics</button>
+      <button class="quick-btn" onclick="sendQuickAction('disk')">💾 Check Disk</button>
+      <button class="quick-btn" onclick="sendQuickAction('reminders')">📅 Reminders</button>
+      <button class="quick-btn" onclick="sendQuickAction('window')">🪟 Active Window Info</button>
+      <button class="quick-btn" onclick="clearChat()">🧹 Clear Feed</button>
+    </div>
+
+    <div class="input-row">
+      <button class="mic-ptt-btn" id="micBtn" title="Push to Talk (Click or Hold)" onclick="toggleVoiceInput()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+          <line x1="12" y1="19" x2="12" y2="23"></line>
+          <line x1="8" y1="23" x2="16" y2="23"></line>
+        </svg>
+      </button>
+
+      <div class="text-input-wrapper">
+        <input type="text" id="chatInput" placeholder="Command Jarvis (or ask anything)..." autocomplete="off">
+        <button class="send-btn" id="sendBtn" onclick="submitChat()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </footer>
+
+  <script src="gui.js"></script>
+</body>
+</html>
