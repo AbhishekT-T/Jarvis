@@ -98,5 +98,6 @@ Every agent must complete this checklist before marking any task as `[DONE]`:
 - [ ] No hardcoded temporary file collisions (e.g. static `temp.wav` or `screenshot.png` without unique timestamps or in-memory buffers).
 - [ ] Flash Tier (`qwen2.5:3b`) residency (`keep_alive=-1`) and Pro/Vision offload (`keep_alive=0`) remain intact.
 - [ ] Audio models remain pinned to CPU (`device="cpu"`, `compute_type="int8"`).
-- [ ] All relevant test scripts (`test_voiceos.py`, `test_gui.py`, `tier_smoke_test.py`) exit with code 0.
 - [ ] Change Log entry appended to [plan.md](file:///m:/coding/Jarvis/plan.md).
+- [ ] All verified changes committed and pushed to GitHub (`git push origin main`).
+

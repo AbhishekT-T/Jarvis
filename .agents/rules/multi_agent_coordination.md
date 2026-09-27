@@ -29,3 +29,11 @@ Before marking your task `[DONE]`:
    - `python tier_smoke_test.py` (if models or tools touched)
 3. Append a structured entry to the Change Log in `plan.md`.
 4. Release the file lock by updating the task status in `plan.md`.
+
+## 5. Always Push to GitHub (Mandatory)
+Every agent MUST push its changes to GitHub immediately upon completing and verifying any task:
+1. Stage changes: `git add <files>`
+2. Commit with a concise descriptive message: `git commit -m "feat/fix: ..."`
+3. Push to remote: `git push origin main` (or active feature branch)
+Never leave verified work uncommitted or unpushed.
+
